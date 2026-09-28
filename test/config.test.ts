@@ -1,201 +1,118 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
+import { testdir } from "vitest-testdirs";
 
 import {
-  defaultModel,
-  resolveOptions,
-  transcriptionProfile,
-  type VoiceConfig,
+  getActiveProfile,
+  loadVoiceSettings,
+  saveVoiceSettings,
+  type VoiceSettings,
 } from "../src/config";
 
-const active = (config: VoiceConfig) => transcriptionProfile(config, config.activeTranscription);
-
-describe("resolveOptions", () => {
-  it("defaults to local transcription with system defaults", () => {
-    const config = resolveOptions({});
-    expect(config.input).toBe("");
-    expect(config.activeTranscription).toBe("default");
-    const transcription = active(config);
-    expect(transcription.type).toBe("local");
-    if (transcription.type === "local") {
-      expect(transcription.binary).toBe("whisper-cli");
-      expect(transcription.language).toBe("auto");
-      // Zero-config default: discovered install, or the historical fallback path.
-      expect(transcription.model.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("trims the input preference", () => {
-    const config = resolveOptions({ input: "  coreaudio:Built-in  " });
-    expect(config.input).toBe("coreaudio:Built-in");
-  });
-
-  it("treats empty input as the system default", () => {
-    expect(resolveOptions({ input: "" }).input).toBe("");
-    expect(resolveOptions({ input: "   " }).input).toBe("");
-    expect(resolveOptions({}).input).toBe("");
-  });
-
-  it("rejects non-string input", () => {
-    expect(() => resolveOptions({ input: 42 })).toThrow("input must be a non-empty string");
-  });
-
-  it("expands ~ in local model paths", () => {
-    const config = resolveOptions({
-      transcriptions: { default: { type: "local", model: "~/models/ggml-base.bin" } },
-    });
-    const transcription = active(config);
-    expect(transcription.type).toBe("local");
-    if (transcription.type === "local") {
-      expect(transcription.model).not.toContain("~");
-      expect(transcription.model).toContain("models/ggml-base.bin");
-    }
-  });
-
-  it("rejects unknown transcription types", () => {
-    expect(() => resolveOptions({ transcriptions: { default: { type: "remote" } } })).toThrow(
-      "transcriptions.default.type must be local or api",
-    );
-  });
-
-  it("parses api transcription config", () => {
-    const config = resolveOptions({
-      transcriptions: {
-        default: {
-          type: "api",
-          endpoint: "https://stt.example.com/v1/",
-          models: ["whisper-large-v3-turbo", "whisper-small"],
-          apiKeyEnv: "VOICE_STT_API_KEY",
-        },
-      },
-    });
-    expect(active(config)).toEqual({
+const SETTINGS: VoiceSettings = {
+  inputDevice: { id: "coreaudio:Mic", name: "Mic", format: "coreaudio", source: "Mic" },
+  activeProfile: "remote",
+  profiles: {
+    local: { type: "local", model: "~/.cache/whisper/ggml-base.bin", binary: "~/bin/whisper-cli" },
+    remote: {
       type: "api",
       endpoint: "https://stt.example.com/v1",
-      models: ["whisper-large-v3-turbo", "whisper-small"],
-      apiKeyEnv: "VOICE_STT_API_KEY",
-      format: "multipart",
-    });
+      model: "whisper-1",
+      apiKeyEnv: "STT_KEY",
+    },
+  },
+};
+
+/** Write `settings` as a settings file and return its path. */
+async function settingsFile(settings: unknown): Promise<string> {
+  const dir = await testdir({ "voice.json": JSON.stringify(settings) });
+  return join(dir, "voice.json");
+}
+
+describe("loadVoiceSettings", () => {
+  it("treats a missing file as no settings", async () => {
+    expect(loadVoiceSettings(join(await testdir({}), "voice.json"))).toEqual({});
   });
 
-  it("rejects non-http endpoints", () => {
-    expect(() =>
-      resolveOptions({
-        transcriptions: { default: { type: "api", endpoint: "ftp://x", models: ["m"] } },
-      }),
-    ).toThrow("transcriptions.default.endpoint must use HTTP or HTTPS");
+  it("returns settings exactly as written, without defaults or path expansion", async () => {
+    expect(loadVoiceSettings(await settingsFile(SETTINGS))).toEqual(SETTINGS);
   });
 
-  it("rejects invalid api format", () => {
-    expect(() =>
-      resolveOptions({
-        transcriptions: {
-          default: { type: "api", endpoint: "https://x", models: ["m"], format: "grpc" },
-        },
-      }),
-    ).toThrow("transcriptions.default.format must be multipart or openrouter");
-  });
-
-  it("deduplicates api models", () => {
-    const config = resolveOptions({
-      transcriptions: {
-        default: { type: "api", endpoint: "https://x", models: ["m", "m2"] },
+  it.each([
+    ["an unknown key", { input: "Mic" }, "at /input: unknown setting"],
+    [
+      "an old-style api profile",
+      {
+        activeProfile: "r",
+        profiles: { r: { type: "api", endpoint: "https://x", models: ["a"] } },
       },
-    });
-    const transcription = active(config);
-    if (transcription.type === "api") {
-      expect(transcription.models).toEqual(["m", "m2"]);
-    } else {
-      throw new Error("expected api config");
-    }
+      "at /profiles/r: must have required properties model",
+    ],
+    [
+      "a misspelled local profile key",
+      { activeProfile: "l", profiles: { l: { type: "local", modle: "x" } } },
+      "at /profiles/l/modle: unknown setting",
+    ],
+    [
+      "an unknown profile type",
+      { activeProfile: "r", profiles: { r: { type: "remote" } } },
+      "at /profiles/r/type: must be equal to constant",
+    ],
+    [
+      "an empty api endpoint",
+      { activeProfile: "r", profiles: { r: { type: "api", endpoint: "", model: "m" } } },
+      "at /profiles/r/endpoint: must not have fewer than 1 characters",
+    ],
+    [
+      "an unsupported device format",
+      { inputDevice: { id: "jack:x", name: "x", format: "jack", source: "x" } },
+      "at /inputDevice/format: must be equal to constant",
+    ],
+  ])("rejects %s and names the field", async (_case, settings, message) => {
+    const path = await settingsFile(settings);
+    expect(() => loadVoiceSettings(path)).toThrow(`Invalid voice settings ${message}`);
   });
 
-  it("parses named profiles with an explicit active profile", () => {
-    const config = resolveOptions({
-      activeTranscription: "syv",
-      transcriptions: {
-        syv: {
-          type: "api",
-          endpoint: "https://stt.example.com/v1",
-          models: ["syv-transcribe"],
-        },
-        local: { type: "local", model: "~/models/ggml-base.bin" },
-      },
-    });
-    expect(config.activeTranscription).toBe("syv");
-    expect(Object.keys(config.transcriptions).toSorted()).toEqual(["local", "syv"]);
-    const transcription = active(config);
-    expect(transcription.type).toBe("api");
+  it.each([
+    ["a missing activeProfile", { profiles: { l: { type: "local" } } }],
+    [
+      "an activeProfile naming no profile",
+      { activeProfile: "x", profiles: { l: { type: "local" } } },
+    ],
+    [
+      "an inherited property name",
+      { activeProfile: "constructor", profiles: { l: { type: "local" } } },
+    ],
+  ])("rejects %s when profiles exist", async (_case, settings) => {
+    const path = await settingsFile(settings);
+    expect(() => loadVoiceSettings(path)).toThrow("activeProfile must name a profile");
   });
 
-  it("defaults the active profile to the first one", () => {
-    const config = resolveOptions({
-      transcriptions: {
-        local: { type: "local", model: "~/models/ggml-base.bin" },
-        syv: { type: "api", endpoint: "https://x", models: ["m"] },
-      },
-    });
-    expect(config.activeTranscription).toBe("local");
-  });
-
-  it("rejects an unknown active profile", () => {
-    expect(() =>
-      resolveOptions({
-        activeTranscription: "nope",
-        transcriptions: { a: { type: "local", model: "m" } },
-      }),
-    ).toThrow("Unknown transcription profile: nope");
-  });
-
-  it("rejects empty and malformed profile maps", () => {
-    expect(() => resolveOptions({ transcriptions: {} })).toThrow("at least one");
-    expect(() => resolveOptions({ transcriptions: [] })).toThrow("must be an object");
-    expect(() => resolveOptions({ transcriptions: { a: "nope" } })).toThrow(
-      "transcriptions.a must be an object",
-    );
-  });
-
-  it("rejects missing or empty api models", () => {
-    expect(() =>
-      resolveOptions({ transcriptions: { default: { type: "api", endpoint: "https://x" } } }),
-    ).toThrow("transcriptions.default.models must be a non-empty list of model IDs");
-    expect(() =>
-      resolveOptions({
-        transcriptions: { default: { type: "api", endpoint: "https://x", models: [] } },
-      }),
-    ).toThrow("transcriptions.default.models must be a non-empty list of model IDs");
-  });
-
-  it("dedupes api models keeping the default first", () => {
-    const config = resolveOptions({
-      transcriptions: {
-        default: { type: "api", endpoint: "https://x", models: ["m", "m", "m2"] },
-      },
-    });
-    expect(transcriptionProfile(config, "default")).toMatchObject({ models: ["m", "m2"] });
+  it("rejects malformed JSON", async () => {
+    const dir = await testdir({ "voice.json": "{ nope" });
+    expect(() => loadVoiceSettings(join(dir, "voice.json"))).toThrow(SyntaxError);
   });
 });
 
-describe("defaultModel", () => {
-  it("returns the configured local path", () => {
-    const config = resolveOptions({
-      transcriptions: { default: { type: "local", model: "/m/ggml.bin" } },
-    });
-    expect(defaultModel(transcriptionProfile(config, "default"))).toBe("/m/ggml.bin");
-  });
-
-  it("returns the first api model", () => {
-    const config = resolveOptions({
-      transcriptions: { default: { type: "api", endpoint: "https://x", models: ["a", "b"] } },
-    });
-    expect(defaultModel(transcriptionProfile(config, "default"))).toBe("a");
+describe("saveVoiceSettings", () => {
+  it("writes formatted JSON that loads back unchanged", async () => {
+    const path = join(await testdir({}), "voice.json");
+    saveVoiceSettings(path, SETTINGS);
+    expect(readFileSync(path, "utf8")).toBe(`${JSON.stringify(SETTINGS, null, 2)}\n`);
+    expect(loadVoiceSettings(path)).toEqual(SETTINGS);
   });
 });
 
-describe("transcriptionProfile", () => {
-  it("throws on unknown names", () => {
-    const config = resolveOptions({});
-    expect(() => transcriptionProfile(config, "nope")).toThrow(
-      "Unknown transcription profile: nope",
-    );
+describe("getActiveProfile", () => {
+  it("uses local transcription with an auto-detected model without profiles", () => {
+    expect(getActiveProfile({})).toEqual({ name: "local", transcription: { type: "local" } });
+  });
+
+  it("returns the active profile itself, so edits to it are saved", () => {
+    const active = getActiveProfile(SETTINGS);
+    expect(active.name).toBe("remote");
+    expect(active.transcription).toBe(SETTINGS.profiles?.remote);
   });
 });

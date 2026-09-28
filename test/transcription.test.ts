@@ -1,283 +1,220 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { tmpdir } from "node:os";
+import { once } from "node:events";
+import { createServer, type IncomingHttpHeaders } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { testdir } from "vitest-testdirs";
+import { metadata } from "vitest-testdirs/helpers";
 
-import { apiBackend, whisperCliBackend } from "../src/backends";
-import type { ApiTranscription, LocalTranscription } from "../src/config";
-import { modelChoices, transcribe } from "../src/transcription";
+import type { TranscriptionProfile } from "../src/config";
+import { transcribe } from "../src/transcription";
 
-const WHISPER_STUB = `#!/usr/bin/env node
-if (process.env.STUB_WHISPER_MODE === "unknown-language") {
-  process.stderr.write("error: unknown language 'xx'\\n");
-  process.exit(1);
-}
-if (process.env.STUB_WHISPER_MODE === "fail") {
-  process.stderr.write("loading\\nwhisper FAIL: bad file\\n");
-  process.exit(1);
-}
-if (process.env.STUB_WHISPER_MODE === "empty") {
-  process.exit(0);
-}
-if (process.env.STUB_WHISPER_MODE === "hang") {
-  setInterval(() => {}, 1000);
-} else {
-  process.stdout.write("  hello\\nworld  ");
-  process.exit(0);
-}
-`;
+/** An executable Node script standing in for whisper-cli. */
+const node = (body: string) => metadata(`#!/usr/bin/env node\n${body}\n`, { mode: 0o755 });
 
-let dir: string | undefined;
-afterEach(() => {
-  delete process.env.STUB_WHISPER_MODE;
-  delete process.env.VOICE_STT_API_KEY;
-  if (dir) {
-    rmSync(dir, { recursive: true, force: true });
-    dir = undefined;
-  }
-});
+const HELLO = String.raw`process.stdout.write("  hello\nworld  ");`;
 
-function setup(): { whisper: string } {
-  dir = mkdtempSync(join(tmpdir(), "agent-voice-tx-"));
-  const whisper = join(dir, "whisper-cli");
-  writeFileSync(whisper, WHISPER_STUB);
-  chmodSync(whisper, 0o755);
-  return { whisper };
+/** A test directory with a fake whisper-cli, a model file and a 100-byte recording. */
+async function fixture(whisper = HELLO) {
+  const dir = await testdir({
+    "whisper-cli": node(whisper),
+    "ggml-test.bin": "model",
+    "rec.wav": new Uint8Array(100),
+    "empty.wav": new Uint8Array(10),
+  });
+  return {
+    dir,
+    whisper: join(dir, "whisper-cli"),
+    model: join(dir, "ggml-test.bin"),
+    wav: join(dir, "rec.wav"),
+    emptyWav: join(dir, "empty.wav"),
+  };
 }
 
-function wav(size = 100): string {
-  const d = dir ?? (dir = mkdtempSync(join(tmpdir(), "agent-voice-tx-")));
-  const file = join(d, `rec-${Math.random().toString(36).slice(2)}.wav`);
-  writeFileSync(file, Buffer.alloc(size));
-  return file;
-}
-
-function modelFile(): string {
-  const d = dir ?? (dir = mkdtempSync(join(tmpdir(), "agent-voice-tx-")));
-  const file = join(d, "ggml-test.bin");
-  writeFileSync(file, Buffer.alloc(10));
-  return file;
-}
-
-const local = (overrides: Partial<LocalTranscription> = {}): LocalTranscription => ({
+const local = (binary: string, model: string, language?: string): TranscriptionProfile => ({
   type: "local",
-  model: "/models/ggml-test.bin",
-  modelsDirectory: "/models",
-  binary: "whisper-cli",
-  language: "auto",
-  ...overrides,
+  binary,
+  model,
+  language,
 });
 
-const api = (overrides: Partial<ApiTranscription> = {}): ApiTranscription => ({
-  type: "api",
-  endpoint: "https://stt.example.com/v1",
-  models: ["whisper-large-v3-turbo"],
-  format: "multipart",
-  ...overrides,
-});
-
-describe("transcribe guards", () => {
-  it("rejects empty recordings", async () => {
-    await expect(transcribe(wav(10), local(), "m")).rejects.toThrow("Recording is empty");
+describe("local transcription", () => {
+  it("resolves normalized text on success", async () => {
+    const { whisper, model, wav } = await fixture();
+    await expect(transcribe(wav, local(whisper, model))).resolves.toBe("hello world");
   });
 
-  it("rejects missing files", async () => {
-    await expect(transcribe("/does/not/exist.wav", local(), "m")).rejects.toThrow(
+  it("passes the model, recording and language to whisper-cli", async () => {
+    const { whisper, model, wav } = await fixture(
+      `process.stdout.write(process.argv.slice(2).join(" "));`,
+    );
+    await expect(transcribe(wav, local(whisper, model, "da"))).resolves.toBe(
+      `-m ${model} -f ${wav} -l da -np -nt`,
+    );
+  });
+
+  it("expands ~/ in the model and binary paths when spawning", async () => {
+    const { dir, wav } = await fixture(`process.stdout.write(process.argv[3]);`);
+    vi.stubEnv("HOME", dir);
+    await expect(transcribe(wav, local("~/whisper-cli", "~/ggml-test.bin"))).resolves.toBe(
+      join(dir, "ggml-test.bin"),
+    );
+  });
+
+  it("rejects empty and missing recordings", async () => {
+    const { whisper, model, emptyWav } = await fixture();
+    await expect(transcribe(emptyWav, local(whisper, model))).rejects.toThrow("Recording is empty");
+    await expect(transcribe("/does/not/exist.wav", local(whisper, model))).rejects.toThrow(
       "Recording is empty",
     );
   });
 
-  it("rejects missing local models", async () => {
-    const { whisper } = setup();
-    const backend = whisperCliBackend({ binary: whisper });
-    await expect(backend.transcribe(wav(), "/nope/ggml.bin")).rejects.toThrow(
-      "Whisper model not found at /nope/ggml.bin",
+  it("rejects a missing model with the configured path", async () => {
+    const { whisper, wav } = await fixture();
+    await expect(transcribe(wav, local(whisper, "~/nope/ggml.bin"))).rejects.toThrow(
+      "Whisper model not found at ~/nope/ggml.bin",
     );
   });
-});
 
-describe("whisperCliBackend", () => {
-  it("resolves normalized text on success", async () => {
-    const { whisper } = setup();
-    const model = modelFile();
-    const backend = whisperCliBackend({ binary: whisper });
-    await expect(backend.transcribe(wav(), model)).resolves.toBe("hello world");
+  it("rejects without a model when none is installed", async () => {
+    const { dir, wav } = await fixture();
+    vi.stubEnv("HOME", dir);
+    await expect(transcribe(wav, { type: "local" })).rejects.toThrow(
+      "No Whisper model found; configure a local model",
+    );
   });
 
   it("rejects a missing binary", async () => {
-    const backend = whisperCliBackend({ binary: "/does/not/exist-whisper" });
-    await expect(backend.transcribe(wav(), modelFile())).rejects.toThrow();
+    const { model, wav } = await fixture();
+    await expect(transcribe(wav, local("/does/not/exist-whisper", model))).rejects.toThrow(
+      "ENOENT",
+    );
   });
 
   it("rejects with the last stderr line on failure", async () => {
-    process.env.STUB_WHISPER_MODE = "fail";
-    const { whisper } = setup();
-    const backend = whisperCliBackend({ binary: whisper });
-    await expect(backend.transcribe(wav(), modelFile())).rejects.toThrow("whisper FAIL: bad file");
+    const { whisper, model, wav } = await fixture(String.raw`
+process.stderr.write("loading\nwhisper FAIL: bad file\n");
+process.exit(1);`);
+    await expect(transcribe(wav, local(whisper, model))).rejects.toThrow("whisper FAIL: bad file");
   });
 
   it("maps unknown-language errors", async () => {
-    process.env.STUB_WHISPER_MODE = "unknown-language";
-    const { whisper } = setup();
-    const backend = whisperCliBackend({ binary: whisper });
-    await expect(backend.transcribe(wav(), modelFile())).rejects.toThrow(
+    const { whisper, model, wav } = await fixture(String.raw`
+process.stderr.write("error: unknown language 'xx'\n");
+process.exit(1);`);
+    await expect(transcribe(wav, local(whisper, model))).rejects.toThrow(
       "Unknown whisper language: xx",
     );
   });
 
   it("rejects empty output as no speech", async () => {
-    process.env.STUB_WHISPER_MODE = "empty";
-    const { whisper } = setup();
-    const backend = whisperCliBackend({ binary: whisper });
-    await expect(backend.transcribe(wav(), modelFile())).rejects.toThrow("No speech detected");
+    const { whisper, model, wav } = await fixture("");
+    await expect(transcribe(wav, local(whisper, model))).rejects.toThrow("No speech detected");
   });
 
   it("kills the subprocess on timeout", async () => {
-    process.env.STUB_WHISPER_MODE = "hang";
-    const { whisper } = setup();
-    const backend = whisperCliBackend({ binary: whisper, timeoutMs: 50 });
-    await expect(backend.transcribe(wav(), modelFile())).rejects.toThrow("Transcription timed out");
+    const { whisper, model, wav } = await fixture("setInterval(() => {}, 1000);");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const timedOut = expect(transcribe(wav, local(whisper, model))).rejects.toThrow(
+      "Transcription timed out (60s)",
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    await timedOut;
   });
 });
 
-type SeenRequest = {
-  url: string;
-  authorization: string;
-  contentType: string;
-  body: Buffer;
-};
-
-function startApiServer(
-  respond: (body: Buffer) => { status: number; payload: unknown },
-): Promise<{ url: string; requests: SeenRequest[]; close: () => Promise<void> }> {
-  const requests: SeenRequest[] = [];
-  const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
+/** A local transcription API that answers every request with `payload`. Closed after the test. */
+async function apiServer(payload: unknown, status = 200) {
+  const requests: { url: string; headers: IncomingHttpHeaders; body: Buffer }[] = [];
+  const server = createServer((req, res) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
     req.on("end", () => {
-      const body = Buffer.concat(chunks);
-      requests.push({
-        url: req.url ?? "",
-        authorization: (req.headers.authorization as string) ?? "",
-        contentType: (req.headers["content-type"] as string) ?? "",
-        body,
-      });
-      const { status, payload } = respond(body);
-      res.writeHead(status, { "content-type": "application/json" });
-      res.end(JSON.stringify(payload));
+      requests.push({ url: req.url ?? "", headers: req.headers, body: Buffer.concat(chunks) });
+      res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(payload));
     });
   });
-  return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      resolve({
-        url: `http://127.0.0.1:${port}`,
-        requests,
-        close: () => new Promise((done) => server.close(() => done())),
-      });
-    });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  onTestFinished(() => {
+    server.closeAllConnections();
+    server.close();
   });
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/`, requests };
 }
 
-describe("apiBackend", () => {
-  it("posts multipart and returns trimmed text", async () => {
-    const server = await startApiServer(() => ({ status: 200, payload: { text: "  hello  " } }));
-    try {
-      const backend = apiBackend({ endpoint: server.url });
-      await expect(backend.transcribe(wav(), "whisper-large-v3-turbo")).resolves.toBe("hello");
-      expect(server.requests).toHaveLength(1);
-      expect(server.requests[0]?.url).toBe("/audio/transcriptions");
-      expect(server.requests[0]?.contentType).toContain("multipart/form-data");
-    } finally {
-      await server.close();
-    }
+describe("api transcription", () => {
+  it("posts multipart to /audio/transcriptions and returns trimmed text", async () => {
+    const { wav } = await fixture();
+    const server = await apiServer({ text: "  hello  " });
+    await expect(
+      transcribe(wav, { type: "api", endpoint: server.url, model: "whisper-1" }),
+    ).resolves.toBe("hello");
+    expect(server.requests).toHaveLength(1);
+    expect(server.requests[0]?.url).toBe("/v1/audio/transcriptions");
+    expect(server.requests[0]?.headers["content-type"]).toContain("multipart/form-data");
+    expect(server.requests[0]?.body.toString()).toContain("whisper-1");
   });
 
   it("posts openrouter JSON with base64 audio", async () => {
-    const server = await startApiServer(() => ({ status: 200, payload: { text: "hi" } }));
-    try {
-      const backend = apiBackend({ endpoint: server.url, format: "openrouter" });
-      await expect(backend.transcribe(wav(), "m")).resolves.toBe("hi");
-      const body = JSON.parse((server.requests[0]?.body ?? Buffer.alloc(0)).toString());
-      expect(body.input_audio.format).toBe("wav");
-      expect(typeof body.input_audio.data).toBe("string");
-    } finally {
-      await server.close();
-    }
+    const { wav } = await fixture();
+    const server = await apiServer({ text: "hi" });
+    await expect(
+      transcribe(wav, { type: "api", endpoint: server.url, model: "m", format: "openrouter" }),
+    ).resolves.toBe("hi");
+    expect(JSON.parse(server.requests[0]?.body.toString() ?? "")).toEqual({
+      model: "m",
+      input_audio: { data: Buffer.alloc(100).toString("base64"), format: "wav" },
+    });
   });
 
   it("sends the bearer token when configured", async () => {
     vi.stubEnv("VOICE_STT_API_KEY", "secret");
-    const server = await startApiServer(() => ({ status: 200, payload: { text: "hi" } }));
-    try {
-      const backend = apiBackend({ endpoint: server.url, apiKeyEnv: "VOICE_STT_API_KEY" });
-      await expect(backend.transcribe(wav(), "m")).resolves.toBe("hi");
-      expect(server.requests[0]?.authorization).toBe("Bearer secret");
-    } finally {
-      await server.close();
-    }
+    const { wav } = await fixture();
+    const server = await apiServer({ text: "hi" });
+    await transcribe(wav, {
+      type: "api",
+      endpoint: server.url,
+      model: "m",
+      apiKeyEnv: "VOICE_STT_API_KEY",
+    });
+    expect(server.requests[0]?.headers.authorization).toBe("Bearer secret");
   });
 
-  it("throws when the api key env var is missing", async () => {
-    const server = await startApiServer(() => ({ status: 200, payload: { text: "hi" } }));
-    try {
-      const backend = apiBackend({ endpoint: server.url, apiKeyEnv: "VOICE_STT_API_KEY" });
-      await expect(backend.transcribe(wav(), "m")).rejects.toThrow(
-        "Set VOICE_STT_API_KEY to use the transcription API",
-      );
-      expect(server.requests).toHaveLength(0);
-    } finally {
-      await server.close();
-    }
+  it("throws before sending when the api key env var is missing", async () => {
+    const { wav } = await fixture();
+    const server = await apiServer({ text: "hi" });
+    const profile = {
+      type: "api",
+      endpoint: server.url,
+      model: "m",
+      apiKeyEnv: "UNSET_KEY",
+    } as const;
+    await expect(transcribe(wav, profile)).rejects.toThrow(
+      "Set UNSET_KEY to use the transcription API",
+    );
+    expect(server.requests).toHaveLength(0);
   });
 
   it("throws on HTTP errors", async () => {
-    const server = await startApiServer(() => ({ status: 500, payload: {} }));
-    try {
-      const backend = apiBackend({ endpoint: server.url });
-      await expect(backend.transcribe(wav(), "m")).rejects.toThrow(
-        "Transcription API returned HTTP 500",
-      );
-    } finally {
-      await server.close();
-    }
+    const { wav } = await fixture();
+    const server = await apiServer({}, 500);
+    await expect(
+      transcribe(wav, { type: "api", endpoint: server.url, model: "m" }),
+    ).rejects.toThrow("Transcription API returned HTTP 500");
   });
 
   it("throws on empty text", async () => {
-    const server = await startApiServer(() => ({ status: 200, payload: { text: "  " } }));
-    try {
-      const backend = apiBackend({ endpoint: server.url });
-      await expect(backend.transcribe(wav(), "m")).rejects.toThrow("No speech detected");
-    } finally {
-      await server.close();
-    }
-  });
-});
-
-describe("transcribe", () => {
-  it("defaults to the configured model", async () => {
-    const { whisper } = setup();
-    const model = modelFile();
-    await expect(transcribe(wav(), local({ binary: whisper, model }), undefined)).resolves.toBe(
-      "hello world",
-    );
-  });
-});
-
-describe("modelChoices", () => {
-  it("lists api models", () => {
-    expect(modelChoices(api({ models: ["a", "b"] }))).toEqual([
-      { title: "a", value: "a" },
-      { title: "b", value: "b" },
-    ]);
-  });
-
-  it("returns empty when the models directory is missing and no model file exists", () => {
-    expect(
-      modelChoices(local({ modelsDirectory: "/does/not/exist", model: "/does/not/exist.bin" })),
-    ).toEqual([]);
+    const { wav } = await fixture();
+    const server = await apiServer({ text: "  " });
+    await expect(
+      transcribe(wav, { type: "api", endpoint: server.url, model: "m" }),
+    ).rejects.toThrow("No speech detected");
   });
 });

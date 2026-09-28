@@ -1,17 +1,8 @@
-export { apiBackend, createTranscribeBackend, soxBackend, whisperCliBackend } from "./backends";
-export type { CaptureBackend, TranscribeBackend } from "./backends";
-export { defaultLocalModel, defaultModelDirectories, discoverLocalModels } from "./models";
-export { defaultModel, resolveOptions, transcriptionProfile } from "./config";
-export type { ApiTranscription, LocalTranscription, Transcription, VoiceConfig } from "./config";
-export {
-  listInputDevices,
-  parseAlsaPcm,
-  parseMacInputs,
-  parsePactlSources,
-  parseWaveAudioInputs,
-  resolvePreferredDevice,
-} from "./devices";
-export type { InputDevice, ListInputDevicesOptions, PreferredDevice, RunFunction } from "./devices";
+export { getActiveProfile, loadVoiceSettings, saveVoiceSettings } from "./config";
+export type { TranscriptionProfile, VoiceSettings } from "./config";
+export { listInputDevices } from "./devices";
+export type { InputDevice } from "./devices";
+export { discoverLocalModels } from "./models";
 export { createRecorder } from "./recording";
-export type { Recorder, RecorderOptions } from "./recording";
-export { modelChoices, transcribe } from "./transcription";
+export type { Recorder } from "./recording";
+export { transcribe } from "./transcription";

@@ -2,27 +2,35 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
-export type InputDevice = {
-  id: string;
-  name: string;
-  format: "coreaudio" | "pulseaudio" | "alsa" | "waveaudio";
-  source: string;
-};
+import { Type } from "typebox";
 
-export type RunFunction = (
-  command: string,
-  args: string[],
-) => Promise<{ stdout: string; stderr: string }>;
+export const inputDeviceSchema = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  format: Type.Union([
+    Type.Literal("coreaudio"),
+    Type.Literal("pulseaudio"),
+    Type.Literal("alsa"),
+    Type.Literal("waveaudio"),
+  ]),
+  source: Type.String(),
+});
 
-export type ListInputDevicesOptions = {
+export type InputDevice = Type.Static<typeof inputDeviceSchema>;
+
+type RunFunction = (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
+
+type ListInputDevicesOptions = {
   platform?: NodeJS.Platform;
   run?: RunFunction;
   readProcAsound?: () => Promise<string>;
 };
 
+// oxlint-disable-next-line typescript/strict-void-return -- node-style callback API, not a void callback
+const execFileAsync = promisify(execFile);
+
 const defaultRun: RunFunction = async (command, args) => {
-  const run = promisify(execFile);
-  const { stdout, stderr } = await run(command, args, { timeout: 5000 });
+  const { stdout, stderr } = await execFileAsync(command, args, { timeout: 5000 });
   return { stdout, stderr };
 };
 
@@ -38,46 +46,46 @@ type MacAudioItem = {
   coreaudio_input_source?: string;
 };
 
-/** Pure parser for `system_profiler -json SPAudioDataType` output. Exported for testing. */
-export function parseMacInputs(stdout: string): InputDevice[] {
-  const data: { SPAudioDataType: { _items?: MacAudioItem[] }[] } = JSON.parse(stdout);
+/** Parses `system_profiler -json SPAudioDataType` output. */
+function parseMacInputs(stdout: string): InputDevice[] {
+  const data = JSON.parse(stdout) as { SPAudioDataType: { _items?: MacAudioItem[] }[] };
   const names = new Set<string>();
   for (const group of data.SPAudioDataType) {
     // eslint-disable-next-line no-underscore-dangle -- system_profiler key
     for (const item of group._items ?? []) {
       // eslint-disable-next-line no-underscore-dangle -- system_profiler key
       const name = item.coreaudio_device_name ?? item._name;
-      if (name && (item.coreaudio_device_input || item.coreaudio_input_source != null))
-        names.add(name);
+      const isInput = (item.coreaudio_device_input ?? 0) > 0 || item.coreaudio_input_source != null;
+      if (name !== undefined && name !== "" && isInput) names.add(name);
     }
   }
   return [...names].map((name) => device("coreaudio", name));
 }
 
-/** Pure parser for `pactl list sources short` output. Exported for testing. */
-export function parsePactlSources(stdout: string): InputDevice[] {
+/** Parses `pactl list sources short` output. */
+function parsePactlSources(stdout: string): InputDevice[] {
   return stdout.split("\n").flatMap((line) => {
     const [, name] = line.split("\t");
-    if (!name || name.endsWith(".monitor")) return [];
+    if (name === undefined || name === "" || name.endsWith(".monitor")) return [];
     return [device("pulseaudio", name)];
   });
 }
 
-/** Pure parser for `/proc/asound/pcm` content. Exported for testing. */
-export function parseAlsaPcm(pcm: string): InputDevice[] {
+/** Parses `/proc/asound/pcm` content. */
+function parseAlsaPcm(pcm: string): InputDevice[] {
   return pcm.split("\n").flatMap((line) => {
-    const match = /^(\d+)-(\d+):\s*([^:]+):.*\bcapture\s+\d+/.exec(line);
-    if (!match?.[1] || !match[2] || !match[3]) return [];
-    return [device("alsa", `plughw:${Number(match[1])},${Number(match[2])}`, match[3].trim())];
+    const [, card, pcmDevice, name] = /^(\d+)-(\d+):\s*([^:]+):.*\bcapture\s+\d+/u.exec(line) ?? [];
+    if (card === undefined || pcmDevice === undefined || name === undefined) return [];
+    return [device("alsa", `plughw:${Number(card)},${Number(pcmDevice)}`, name.trim())];
   });
 }
 
-/** Pure parser for SoX WaveAudio debug output. Exported for testing. */
-export function parseWaveAudioInputs(output: string): InputDevice[] {
+/** Parses SoX WaveAudio debug output. */
+function parseWaveAudioInputs(output: string): InputDevice[] {
   const inputs = new Map<string, InputDevice>();
-  for (const match of output.matchAll(/Enumerating input device\s+(\d+):\s+"([^"]+)"/g)) {
+  for (const match of output.matchAll(/Enumerating input device\s+(\d+):\s+"([^"]+)"/gu)) {
     const [, id, name] = match;
-    if (!id || !name) continue;
+    if (id === undefined || name === undefined) continue;
     inputs.set(id, device("waveaudio", id, name));
   }
   return [...inputs.values()];
@@ -96,7 +104,7 @@ async function linuxInputs(
   try {
     const { stdout } = await run("pactl", ["list", "sources", "short"]);
     const sources = parsePactlSources(stdout);
-    if (sources.length) return sources;
+    if (sources.length > 0) return sources;
   } catch {
     // pactl is optional; ALSA capture devices are available from procfs.
   }
@@ -124,7 +132,7 @@ async function windowsInputs(run: RunFunction): Promise<InputDevice[]> {
     output = error.stderr;
   }
   const inputs = parseWaveAudioInputs(output);
-  if (!inputs.length) throw new Error("SoX could not list WaveAudio inputs");
+  if (inputs.length === 0) throw new Error("SoX could not list WaveAudio inputs");
   return inputs;
 }
 
@@ -143,35 +151,4 @@ export function listInputDevices(options: ListInputDevicesOptions = {}): Promise
     default:
       throw new Error(`Input device selection is unsupported on ${platform}`);
   }
-}
-
-export type PreferredDevice = {
-  device: InputDevice | undefined;
-  /** Warning for the host to display when falling back to another input. */
-  warning: string | undefined;
-};
-
-/**
- * Match a saved `input` preference (device id, name, or source) against
- * discovered devices. Falls back to the first available input with a warning
- * instead of silently using the OS default. Hosts display `warning` themselves.
- */
-export function resolvePreferredDevice(
-  devices: InputDevice[],
-  preference: string,
-): PreferredDevice {
-  if (!preference) return { device: undefined, warning: undefined };
-  const selected = devices.find(
-    (candidate) =>
-      candidate.id === preference ||
-      candidate.name === preference ||
-      candidate.source === preference,
-  );
-  if (selected) return { device: selected, warning: undefined };
-  const fallback = devices[0];
-  if (!fallback) throw new Error("No available input devices");
-  return {
-    device: fallback,
-    warning: `Input ${preference} is unavailable; using ${fallback.name}. Preference kept for next time`,
-  };
 }

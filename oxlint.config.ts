@@ -22,8 +22,18 @@ export default defineConfig({
     "typescript/prefer-readonly-parameter-types": "off",
     "typescript/no-unsafe-type-assertion": "off",
     curly: "off",
+    "typescript/switch-exhaustiveness-check": [
+      "warn",
+      { considerDefaultExhaustiveForUnions: true },
+    ],
   },
   overrides: [
+    {
+      files: ["test/**/*"],
+      rules: {
+        "max-lines-per-function": "off",
+      },
+    },
     {
       files: [".github/**/*", "scripts/**/*"],
       rules: {

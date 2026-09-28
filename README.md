@@ -16,122 +16,68 @@ pnpm add @luxass/agent-voice
 ```ts
 import {
   createRecorder,
+  getActiveProfile,
   listInputDevices,
-  resolveOptions,
-  resolvePreferredDevice,
+  loadVoiceSettings,
+  saveVoiceSettings,
   transcribe,
-  transcriptionProfile,
 } from "@luxass/agent-voice";
 
-const options = resolveOptions({});
-const recorder = createRecorder({
-  onError: (error) => console.error(`Recording failed: ${error.message}`),
-});
+// The host chooses where its settings file lives.
+const settings = loadVoiceSettings(settingsPath);
+const recorder = createRecorder();
 
-// Start recording (system default input, or pass a device).
-const { device, warning } = resolvePreferredDevice(await listInputDevices(), options.input);
-if (warning) console.warn(warning);
-recorder.start(device);
+// Recording uses the saved device directly, or the system default.
+recorder.start(settings.inputDevice, (error) => notify(error.message));
 
-// …later: stop, transcribe, clean up. The file is yours after stop().
+// On the next invocation:
 const file = await recorder.stop();
 try {
-  const active = transcriptionProfile(options, options.activeTranscription);
-  const text = await transcribe(file, active);
-  console.log(text);
+  const text = await transcribe(file, getActiveProfile(settings).transcription);
+  paste(text);
 } finally {
   recorder.discard(file);
 }
+
+// List devices only when opening a device picker, then save the same object.
+settings.inputDevice = (await listInputDevices())[0];
+saveVoiceSettings(settingsPath, settings);
 ```
 
-> [!NOTE]
-> Recording is file-based: `stop()` hands you a WAV path in the OS temp
-> directory, and you delete it with `discard()`. The recorder deletes it
-> for you on every failure path. With local transcription the audio never
-> leaves the machine.
+`loadVoiceSettings` validates once, without expanding paths or writing defaults. A missing file means no settings. Save the same object after edits. Unknown keys are rejected.
 
-## ⚙️ Configuration
+## ⚙️ Settings
 
-`resolveOptions` parses plain JSON into a validated config. Everything is
-optional — omitting it all means system-default mic plus auto-discovered
-local model:
+Omitting everything uses the system-default microphone and an auto-discovered local Whisper model. For multiple transcription configurations, name profiles and choose one explicitly:
 
 ```json
 {
-  "input": "",
-  "transcriptions": {
-    "default": {
+  "activeProfile": "local",
+  "profiles": {
+    "local": {
       "type": "local",
-      "model": "~/.cache/whisper/ggml-large-v3-turbo.bin",
-      "modelsDirectory": "~/.cache/whisper",
-      "binary": "whisper-cli",
-      "language": "auto"
-    }
-  }
-}
-```
-
-Local models are auto-discovered from `~/.cache/whisper` and
-`~/.local/share/whisper-cpp`, so `model` is only needed to pin one.
-An empty `input` means the system default, re-resolved on every recording
-with a warning when a saved device is unplugged.
-
-Use an OpenAI-compatible API instead of local whisper.cpp:
-
-```json
-{
-  "transcriptions": {
-    "default": {
+      "model": "~/models/ggml-large.bin"
+    },
+    "remote": {
       "type": "api",
       "endpoint": "https://stt.example.com/v1",
-      "models": ["whisper-large-v3-turbo", "whisper-small"],
-      "apiKeyEnv": "VOICE_STT_API_KEY",
-      "format": "multipart"
+      "model": "whisper-large-v3",
+      "apiKeyEnv": "VOICE_API_KEY"
     }
   }
 }
 ```
 
-The first model is the default; the rest feed the model picker.
+The model and binary may use `~/`. These paths are expanded only when the local CLI accesses them. If no local model is configured, model discovery runs only when local transcription starts. An API profile defaults to multipart requests; use `"format": "openrouter"` for OpenRouter JSON audio. API keys belong in environment variables, not settings.
 
-Set the key in the environment, never in the file. `format` is `multipart`
-by default, or `openrouter` for OpenRouter's JSON audio format.
+The host's device picker can save an `inputDevice` returned by `listInputDevices()`. When omitted, SoX uses the system default. If a saved input disappears, recording fails rather than silently switching microphones.
 
-Switch between backends with named profiles. Exactly one is active at a time
-(`activeTranscription`, defaults to the first profile; `{}` alone means
-zero-config local):
-
-```json
-{
-  "activeTranscription": "syv",
-  "transcriptions": {
-    "syv": {
-      "type": "api",
-      "endpoint": "https://platform.syv.ai/v1",
-      "models": ["syv-transcribe"],
-      "apiKeyEnv": "SYV_API_KEY"
-    },
-    "local": { "type": "local" }
-  }
-}
-```
-
-> [!TIP]
-> Two local _models_ need no profiles: override the model per call with
-> `transcribe(file, config, model)` (e.g. from a `modelChoices(config)`
-> picker). Profiles are for switching backend _configs_.
-
-## 🔌 Requirements
+## 🧰 Requirements
 
 - Node.js >= 24
-- `sox` on `PATH` for recording (a custom binary works via `soxBackend(command)`)
-- Local transcription: `whisper-cli` on `PATH` plus a `ggml-*.bin` model
-- API transcription needs no local tools
-
-Recording and transcription are composable backends (`soxBackend`,
-`whisperCliBackend`, `apiBackend`) — `createRecorder({ backend })` accepts
-any capture backend, so a future ffmpeg backend slots in without changing
-callers.
+- `sox` on `PATH` for recording
+- Local transcription: `whisper-cli` on `PATH` and a `ggml-*.bin` model
+- API transcription needs no local Whisper installation
 
 ## 📄 License
 

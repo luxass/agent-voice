@@ -1,37 +1,118 @@
-import { existsSync, readdirSync } from "node:fs";
-import { basename, join } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-import { createTranscribeBackend } from "./backends";
-import { defaultModel, type Transcription } from "./config";
+import type { TranscriptionProfile } from "./config";
+import { discoverLocalModels } from "./models";
 
-export function modelChoices(config: Transcription): { title: string; value: string }[] {
-  if (config.type === "api") {
-    return config.models.map((model) => ({ title: model, value: model }));
-  }
-  let models: string[] = [];
-  try {
-    models = readdirSync(config.modelsDirectory, { withFileTypes: true })
-      .filter(
-        (entry) => (entry.isFile() || entry.isSymbolicLink()) && /^ggml-.*\.bin$/.test(entry.name),
-      )
-      .map((entry) => join(config.modelsDirectory, entry.name))
-      .filter(existsSync);
-  } catch {
-    // A configured model outside the directory is still available below.
-  }
-  if (existsSync(config.model) && !models.includes(config.model)) models.push(config.model);
-  return models.toSorted().map((model) => ({ title: basename(model), value: model }));
+type LocalProfile = Extract<TranscriptionProfile, { type: "local" }>;
+type ApiProfile = Extract<TranscriptionProfile, { type: "api" }>;
+
+const TIMEOUT_MS = 60_000;
+
+/** Settings keep `~/` paths as written; expand them only when handing them to whisper-cli. */
+function expandHome(path: string): string {
+  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
 
-/**
- * Transcribe `file` with the backend described by `config`, overriding the
- * configured default model when `model` is given (e.g. a picker selection).
- */
-export function transcribe(
-  file: string,
-  config: Transcription,
-  model: string | undefined = defaultModel(config),
-  options: { timeoutMs?: number } = {},
-): Promise<string> {
-  return createTranscribeBackend(config, options).transcribe(file, model);
+/** Run `command` to completion, killing it after `TIMEOUT_MS`. */
+function run(
+  command: string,
+  args: string[],
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`Transcription timed out (${TIMEOUT_MS / 1000}s)`));
+    }, TIMEOUT_MS);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+async function runWhisperCli(file: string, profile: LocalProfile): Promise<string> {
+  const model = profile.model ?? discoverLocalModels()[0];
+  if (model === undefined) throw new Error("No Whisper model found; configure a local model");
+  const modelPath = expandHome(model);
+  if (!existsSync(modelPath)) throw new Error(`Whisper model not found at ${model}`);
+  const args = ["-m", modelPath, "-f", file, "-l", profile.language ?? "auto", "-np", "-nt"];
+  const { code, stdout, stderr } = await run(expandHome(profile.binary ?? "whisper-cli"), args);
+  const [, language] = /error: unknown language '([^']+)'/u.exec(stderr) ?? [];
+  if (language !== undefined) throw new Error(`Unknown whisper language: ${language}`);
+  if (code !== 0) {
+    const line = stderr.trim().split("\n").pop();
+    throw new Error(line === undefined || line === "" ? `Whisper exited (${code})` : line);
+  }
+  return stdout.replaceAll(/\s+/gu, " ").trim();
+}
+
+async function postAudio(file: string, profile: ApiProfile): Promise<string> {
+  const headers: Record<string, string> = {};
+  if (profile.apiKeyEnv !== undefined) {
+    const key = process.env[profile.apiKeyEnv];
+    if (key === undefined || key === "")
+      throw new Error(`Set ${profile.apiKeyEnv} to use the transcription API`);
+    headers.Authorization = `Bearer ${key}`;
+  }
+  const audio = await readFile(file);
+
+  let body: BodyInit;
+  if (profile.format === "openrouter") {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify({
+      model: profile.model,
+      input_audio: { data: audio.toString("base64"), format: "wav" },
+    });
+  } else {
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(audio)], { type: "audio/wav" }), "audio.wav");
+    form.append("model", profile.model);
+    // Ask for the JSON envelope explicitly instead of relying on the server default.
+    form.append("response_format", "json");
+    body = form;
+  }
+
+  const endpoint = profile.endpoint.replace(/\/+$/u, "");
+  const response = await fetch(`${endpoint}/audio/transcriptions`, {
+    method: "POST",
+    headers,
+    body,
+    redirect: "error",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`Transcription API returned HTTP ${response.status}`);
+  const result: unknown = await response.json();
+  return typeof result === "object" &&
+    result !== null &&
+    "text" in result &&
+    typeof result.text === "string"
+    ? result.text.trim()
+    : "";
+}
+
+/** Transcribe a WAV file with the selected profile. Local model discovery happens only when needed. */
+export async function transcribe(file: string, profile: TranscriptionProfile): Promise<string> {
+  // 44 bytes is a bare WAV header.
+  if (!existsSync(file) || statSync(file).size <= 44) throw new Error("Recording is empty");
+  const text =
+    profile.type === "api" ? await postAudio(file, profile) : await runWhisperCli(file, profile);
+  if (text === "") throw new Error("No speech detected");
+  return text;
 }

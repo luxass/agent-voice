@@ -1,145 +1,93 @@
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { defaultLocalModel } from "./models";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 
-export type LocalTranscription = {
-  type: "local";
-  model: string;
-  modelsDirectory: string;
-  binary: string;
-  language: string;
-};
+import { inputDeviceSchema } from "./devices";
 
-export type ApiTranscription = {
-  type: "api";
-  endpoint: string;
-  /** Model choices; the first entry is the default. */
-  models: string[];
-  apiKeyEnv?: string;
-  format: "multipart" | "openrouter";
-};
+const strict = { additionalProperties: false } as const;
 
-export type Transcription = LocalTranscription | ApiTranscription;
+const apiProfileSchema = Type.Object(
+  {
+    type: Type.Literal("api"),
+    endpoint: Type.String({ minLength: 1 }),
+    model: Type.String({ minLength: 1 }),
+    apiKeyEnv: Type.Optional(Type.String({ minLength: 1 })),
+    format: Type.Optional(Type.Union([Type.Literal("multipart"), Type.Literal("openrouter")])),
+  },
+  strict,
+);
 
-export type VoiceConfig = {
-  input: string;
-  /** Active profile name. Exactly one profile transcribes at a time. */
-  activeTranscription: string;
-  transcriptions: Record<string, Transcription>;
-};
+const localProfileSchema = Type.Object(
+  {
+    type: Type.Literal("local"),
+    model: Type.Optional(Type.String({ minLength: 1 })),
+    binary: Type.Optional(Type.String({ minLength: 1 })),
+    language: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  strict,
+);
 
-function pathFromHome(value: string): string {
-  return value === "~"
-    ? homedir()
-    : value.startsWith("~/")
-      ? join(homedir(), value.slice(2))
-      : value;
+// Validate a profile only against the variant its `type` selects, so errors name that variant's fields.
+const transcriptionProfileSchema = Type.Unsafe<
+  Type.Static<typeof apiProfileSchema> | Type.Static<typeof localProfileSchema>
+>({
+  if: Type.Object({ type: Type.Literal("api") }),
+  // oxlint-disable-next-line unicorn/no-thenable -- JSON Schema keyword, not a promise
+  then: apiProfileSchema,
+  else: localProfileSchema,
+});
+
+const voiceSettingsSchema = Type.Object(
+  {
+    inputDevice: Type.Optional(inputDeviceSchema),
+    activeProfile: Type.Optional(Type.String()),
+    profiles: Type.Optional(Type.Record(Type.String(), transcriptionProfileSchema)),
+  },
+  strict,
+);
+
+export type TranscriptionProfile = Type.Static<typeof transcriptionProfileSchema>;
+export type VoiceSettings = Type.Static<typeof voiceSettingsSchema>;
+
+function parseVoiceSettings(value: unknown): VoiceSettings {
+  if (!Value.Check(voiceSettingsSchema, value)) {
+    const [error] = Value.Errors(voiceSettingsSchema, value);
+    // A failed api profile only reports `must match "then" schema`; re-check it for the detail.
+    const [detail] =
+      error?.keyword === "if"
+        ? Value.Errors(apiProfileSchema, Value.Pointer.Get(value, error.instancePath))
+        : [];
+    const reported = detail ?? error;
+    // `additionalProperties: false` reports unknown keys as "schema is false".
+    const message = reported?.keyword === "boolean" ? "unknown setting" : reported?.message;
+    const path = `${error?.instancePath ?? ""}${detail?.instancePath ?? ""}`;
+    throw new Error(`Invalid voice settings at ${path || "/"}: ${message}`);
+  }
+  if (value.profiles && !Object.hasOwn(value.profiles, value.activeProfile ?? ""))
+    throw new Error("activeProfile must name a profile");
+  return value;
 }
 
-function text(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value.trim())
-    throw new Error(`${label} must be a non-empty string`);
-  return value.trim();
+/**
+ * Read and validate the settings file at a host-chosen path. A missing file means no settings.
+ * Values are returned as written: no defaults are added and `~/` paths are kept.
+ */
+export function loadVoiceSettings(path: string): VoiceSettings {
+  return existsSync(path) ? parseVoiceSettings(JSON.parse(readFileSync(path, "utf8"))) : {};
 }
 
-function parseTranscription(
-  raw: Record<string, unknown> | undefined,
-  label: string,
-): Transcription {
-  if (raw?.type === "api") {
-    const endpoint = text(raw.endpoint, `${label}.endpoint`);
-    const url = new URL(endpoint);
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      throw new Error(`${label}.endpoint must use HTTP or HTTPS`);
-    }
-    if (!Array.isArray(raw.models) || raw.models.length === 0) {
-      throw new Error(`${label}.models must be a non-empty list of model IDs`);
-    }
-    const models = [...new Set(raw.models.map((item) => text(item, `${label}.models entry`)))];
-    const format = raw.format ?? "multipart";
-    if (format !== "multipart" && format !== "openrouter") {
-      throw new Error(`${label}.format must be multipart or openrouter`);
-    }
-    return {
-      type: "api",
-      endpoint: endpoint.replace(/\/+$/, ""),
-      models,
-      apiKeyEnv:
-        raw.apiKeyEnv === undefined ? undefined : text(raw.apiKeyEnv, `${label}.apiKeyEnv`),
-      format,
-    };
-  }
-
-  if (raw !== undefined && raw.type !== "local") {
-    throw new Error(`${label}.type must be local or api`);
-  }
-  // Zero-config default: first installed model from the well-known directories.
-  // Falls back to the historical path so the error names a concrete file.
-  const model = pathFromHome(
-    raw?.model === undefined
-      ? (defaultLocalModel() ??
-          join(homedir(), ".local", "share", "whisper-cpp", "ggml-large-v3-turbo-q5_0.bin"))
-      : text(raw.model, `${label}.model`),
-  );
-  return {
-    type: "local",
-    model,
-    modelsDirectory:
-      raw?.modelsDirectory === undefined
-        ? dirname(model)
-        : pathFromHome(text(raw.modelsDirectory, `${label}.modelsDirectory`)),
-    binary:
-      raw?.binary === undefined ? "whisper-cli" : pathFromHome(text(raw.binary, `${label}.binary`)),
-    language: raw?.language === undefined ? "auto" : text(raw.language, `${label}.language`),
-  };
+export function saveVoiceSettings(path: string, settings: VoiceSettings): void {
+  writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
-/** Default model for a transcription config: the configured local path, or the first API model. */
-export function defaultModel(config: Transcription): string {
-  if (config.type === "api") {
-    const first = config.models[0];
-    if (!first) throw new Error("API transcription needs at least one model");
-    return first;
-  }
-  return config.model;
-}
-
-/** Look up a named transcription profile. Throws on unknown names. */
-export function transcriptionProfile(config: VoiceConfig, name: string): Transcription {
-  const profile = config.transcriptions[name];
-  if (!profile) throw new Error(`Unknown transcription profile: ${name}`);
-  return profile;
-}
-
-export function resolveOptions(options: Record<string, unknown>): VoiceConfig {
-  // An explicit empty string means "system default", same as omitting the key.
-  const input =
-    options.input === undefined || (typeof options.input === "string" && !options.input.trim())
-      ? ""
-      : text(options.input, "input");
-  // A missing map means zero-config: one `default` profile with local defaults.
-  // `undefined` is a valid profile value and also resolves to local defaults.
-  const profiles = (options.transcriptions ?? { default: undefined }) as Record<string, unknown>;
-  if (typeof profiles !== "object" || Array.isArray(profiles)) {
-    throw new Error("transcriptions must be an object of named transcription configs");
-  }
-  const names = Object.keys(profiles);
-  if (names.length === 0)
-    throw new Error("transcriptions must name at least one transcription config");
-  const transcriptions: Record<string, Transcription> = {};
-  for (const name of names) {
-    const raw = profiles[name] as Record<string, unknown> | undefined;
-    if (raw !== undefined && (typeof raw !== "object" || raw === null || Array.isArray(raw))) {
-      throw new Error(`transcriptions.${name} must be an object`);
-    }
-    transcriptions[name] = parseTranscription(raw, `transcriptions.${name}`);
-  }
-  const first = names[0] as string;
-  const active =
-    options.activeTranscription === undefined
-      ? first
-      : text(options.activeTranscription, "activeTranscription");
-  if (!transcriptions[active]) throw new Error(`Unknown transcription profile: ${active}`);
-  return { input, activeTranscription: active, transcriptions };
+export function getActiveProfile(settings: VoiceSettings): {
+  name: string;
+  transcription: TranscriptionProfile;
+} {
+  if (!settings.profiles) return { name: "local", transcription: { type: "local" } };
+  const name = settings.activeProfile ?? "";
+  const transcription = settings.profiles[name];
+  if (!transcription) throw new Error(`Unknown voice profile: ${name}`);
+  return { name, transcription };
 }

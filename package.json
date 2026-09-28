@@ -1,6 +1,6 @@
 {
   "name": "@luxass/agent-voice",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Host-independent audio recording, input device discovery, and Whisper transcription",
   "license": "MIT",
   "author": {
@@ -29,6 +29,9 @@
     },
     "./package.json": "./package.json"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsdown",
     "test": "vitest run",
@@ -38,6 +41,9 @@
     "fmt:check": "oxfmt --check .",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "typebox": "catalog:"
+  },
   "devDependencies": {
     "@types/node": "catalog:dev",
     "oxfmt": "catalog:dev",
@@ -46,13 +52,11 @@
     "publint": "catalog:dev",
     "tsdown": "catalog:dev",
     "typescript": "catalog:dev",
-    "vitest": "catalog:dev"
+    "vitest": "catalog:dev",
+    "vitest-testdirs": "catalog:dev"
   },
   "engines": {
     "node": ">=24"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "packageManager": "pnpm@12.6.0"
 }

@@ -1,49 +1,61 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { testdir } from "vitest-testdirs";
+import { symlink } from "vitest-testdirs/helpers";
 
-import { defaultModelDirectories, discoverLocalModels } from "../src/models";
-
-let dir: string | undefined;
-afterEach(() => {
-  if (dir) {
-    rmSync(dir, { recursive: true, force: true });
-    dir = undefined;
-  }
-});
-
-function dirWith(files: string[]): string {
-  dir = mkdtempSync(join(tmpdir(), "agent-voice-models-"));
-  for (const file of files) writeFileSync(join(dir, file), Buffer.alloc(10));
-  return dir;
-}
+import { discoverLocalModels } from "../src/models";
 
 describe("discoverLocalModels", () => {
-  it("finds ggml models and skips other files", () => {
-    const found = discoverLocalModels([dirWith(["ggml-base.bin", "notes.txt", "ggml-small.bin"])]);
-    expect(found).toEqual([
-      join(dir as string, "ggml-base.bin"),
-      join(dir as string, "ggml-small.bin"),
+  it("finds ggml models sorted by name and skips other files", async () => {
+    const dir = await testdir({
+      "ggml-small.bin": "",
+      "notes.txt": "",
+      "ggml-base.bin": "",
+      "model.bin": "",
+    });
+    expect(discoverLocalModels([dir])).toEqual([
+      join(dir, "ggml-base.bin"),
+      join(dir, "ggml-small.bin"),
     ]);
   });
 
-  it("returns empty for missing directories", () => {
-    expect(discoverLocalModels(["/does/not/exist"])).toEqual([]);
+  it("follows symlinked models but skips broken links", async () => {
+    const dir = await testdir({
+      store: { "ggml-real.bin": "" },
+      models: {
+        "ggml-linked.bin": symlink("../store/ggml-real.bin"),
+        "ggml-broken.bin": symlink("../store/missing.bin"),
+      },
+    });
+    expect(discoverLocalModels([join(dir, "models")])).toEqual([
+      join(dir, "models", "ggml-linked.bin"),
+    ]);
   });
 
-  it("searches directories in order", () => {
-    const first = dirWith(["ggml-b.bin"]);
-    const second = mkdtempSync(join(tmpdir(), "agent-voice-models-"));
-    writeFileSync(join(second, "ggml-a.bin"), Buffer.alloc(10));
-    const found = discoverLocalModels([first, second]);
-    expect(found).toEqual([join(first, "ggml-b.bin"), join(second, "ggml-a.bin")]);
-    rmSync(second, { recursive: true, force: true });
+  it("searches directories in order and ignores missing ones", async () => {
+    const dir = await testdir({ first: { "ggml-b.bin": "" }, second: { "ggml-a.bin": "" } });
+    expect(
+      discoverLocalModels([join(dir, "first"), "/does/not/exist", join(dir, "second")]),
+    ).toEqual([join(dir, "first", "ggml-b.bin"), join(dir, "second", "ggml-a.bin")]);
+  });
+});
+
+describe("discoverLocalModels defaults", () => {
+  it("prefers ~/.cache/whisper over ~/.local/share/whisper-cpp", async () => {
+    const dir = await testdir({
+      ".cache": { whisper: { "ggml-turbo.bin": "" } },
+      ".local": { share: { "whisper-cpp": { "ggml-base.bin": "" } } },
+    });
+    vi.stubEnv("HOME", dir);
+    expect(discoverLocalModels()).toEqual([
+      join(dir, ".cache", "whisper", "ggml-turbo.bin"),
+      join(dir, ".local", "share", "whisper-cpp", "ggml-base.bin"),
+    ]);
   });
 
-  it("covers the pi-style and whisper-cpp-style locations", () => {
-    expect(defaultModelDirectories().length).toBeGreaterThan(0);
-    expect(defaultModelDirectories().some((d) => d.endsWith(join(".cache", "whisper")))).toBe(true);
+  it("is empty when no model is installed", async () => {
+    vi.stubEnv("HOME", await testdir({}));
+    expect(discoverLocalModels()).toEqual([]);
   });
 });
