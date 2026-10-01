@@ -1,21 +1,15 @@
 import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
 import type { TranscriptionProfile } from "./config";
 import { discoverLocalModels } from "./models";
+import { expandHome } from "./paths";
 
 type LocalProfile = Extract<TranscriptionProfile, { type: "local" }>;
 type ApiProfile = Extract<TranscriptionProfile, { type: "api" }>;
 
 const TIMEOUT_MS = 60_000;
-
-/** Settings keep `~/` paths as written; expand them only when handing them to whisper-cli. */
-function expandHome(path: string): string {
-  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
-}
 
 /** Run `command` to completion, killing it after `TIMEOUT_MS`. */
 function run(
@@ -49,7 +43,8 @@ function run(
 
 async function runWhisperCli(file: string, profile: LocalProfile): Promise<string> {
   const model = profile.model ?? discoverLocalModels()[0];
-  if (model === undefined) throw new Error("No Whisper model found; configure a local model");
+  if (model === undefined)
+    throw new Error("No Whisper model found; download one or configure a local model");
   const modelPath = expandHome(model);
   if (!existsSync(modelPath)) throw new Error(`Whisper model not found at ${model}`);
   const args = ["-m", modelPath, "-f", file, "-l", profile.language ?? "auto", "-np", "-nt"];
