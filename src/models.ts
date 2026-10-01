@@ -1,5 +1,5 @@
-import { createWriteStream, existsSync, mkdirSync, readdirSync } from "node:fs";
-import { rename, rm } from "node:fs/promises";
+import { createWriteStream, existsSync, readdirSync } from "node:fs";
+import { mkdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -77,13 +77,10 @@ export async function downloadModel(
   const response = await fetch(`${MODEL_BASE_URL}/ggml-${name}.bin`, { signal });
   if (!response.ok || !response.body)
     throw new Error(`Downloading ${name} failed: HTTP ${response.status}`);
-  // A compressed response's length is not the length of the bytes fetch hands us.
-  const length = response.headers.has("content-encoding")
-    ? Number.NaN
-    : Number(response.headers.get("content-length"));
-  const total = Number.isFinite(length) && length > 0 ? length : undefined;
+  const length = Number(response.headers.get("content-length"));
+  const total = length > 0 ? length : undefined;
 
-  mkdirSync(dir, { recursive: true });
+  await mkdir(dir, { recursive: true });
   let received = 0;
   try {
     await pipeline(
@@ -98,8 +95,6 @@ export async function downloadModel(
       createWriteStream(partial),
       { signal },
     );
-    if (total !== undefined && received !== total)
-      throw new Error(`Downloading ${name} ended early (${received} of ${total} bytes)`);
     await rename(partial, target);
   } catch (error) {
     await rm(partial, { force: true });

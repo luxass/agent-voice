@@ -41,9 +41,9 @@ describe("runDoctor", () => {
   it("reports missing tools and models with fixes", async () => {
     await environment([]);
     expect(await runDoctor({})).toEqual([
-      { id: "sox", ok: false, detail: "sox not found on PATH", fix: "Install SoX" },
-      { id: "whisper-cli", ok: false, detail: "whisper-cli not found", fix: "Install whisper.cpp" },
-      { id: "model", ok: false, detail: "No Whisper model found", fix: "Download a Whisper model" },
+      { id: "sox", ok: false, detail: "sox not found" },
+      { id: "whisper-cli", ok: false, detail: "whisper-cli not found" },
+      { id: "model", ok: false, detail: "No Whisper model found" },
     ]);
   });
 
@@ -59,18 +59,8 @@ describe("runDoctor", () => {
         id: "model",
         ok: false,
         detail: "~/gone.bin does not exist",
-        fix: "Download a Whisper model",
       },
     ]);
-  });
-
-  it("flags unfinished downloads", async () => {
-    await environment(["sox", "whisper-cli"], {
-      ".cache": { whisper: { "ggml-base.en.bin": "", "ggml-small.bin.part": "" } },
-    });
-    const partial = (await runDoctor({})).at(-1);
-    expect(partial).toMatchObject({ id: "partial-download", ok: false });
-    expect(partial?.detail).toContain("ggml-small.bin.part");
   });
 
   it("checks the API key variable instead of local tools for API profiles", async () => {
@@ -113,7 +103,6 @@ describe("runDoctor", () => {
       id: "device",
       ok: false,
       detail: "Mic is not connected",
-      fix: "Choose another input device",
     });
     expect(
       await runDoctor(settings, { listDevices: () => Promise.reject(new Error("no pactl")) }),

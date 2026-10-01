@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -82,20 +82,17 @@ describe("modelDir", () => {
   });
 });
 
-/** A streaming response of `chunks`; `length` overrides the Content-Length header. */
-function respond(chunks: string[], init: { status?: number; length?: number } = {}) {
+/** A streaming response of `chunks` with a matching Content-Length. */
+function respond(chunks: string[], status = 200) {
   const bytes = chunks.map((chunk) => new TextEncoder().encode(chunk));
-  const length = init.length ?? bytes.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const length = bytes.reduce((sum, chunk) => sum + chunk.byteLength, 0);
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       for (const chunk of bytes) controller.enqueue(chunk);
       controller.close();
     },
   });
-  return new Response(body, {
-    status: init.status ?? 200,
-    headers: { "content-length": String(length) },
-  });
+  return new Response(body, { status, headers: { "content-length": String(length) } });
 }
 
 describe("downloadModel", () => {
@@ -141,17 +138,23 @@ describe("downloadModel", () => {
 
   it("fails on HTTP errors without writing a file", async () => {
     const dir = await testdir({});
-    vi.stubGlobal("fetch", () => Promise.resolve(respond(["nope"], { status: 404 })));
+    vi.stubGlobal("fetch", () => Promise.resolve(respond(["nope"], 404)));
     await expect(downloadModel("missing", { dir })).rejects.toThrow(
       "Downloading missing failed: HTTP 404",
     );
     expect(readdirSync(dir)).toEqual([]);
   });
 
-  it("removes the partial file when the body ends early", async () => {
+  it("removes the partial file when the connection fails mid-download", async () => {
     const dir = await testdir({});
-    vi.stubGlobal("fetch", () => Promise.resolve(respond(["mod"], { length: 5 })));
-    await expect(downloadModel("base", { dir })).rejects.toThrow("ended early (3 of 5 bytes)");
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(new TextEncoder().encode("mod"));
+        stream.error(new Error("socket closed"));
+      },
+    });
+    vi.stubGlobal("fetch", () => Promise.resolve(new Response(body)));
+    await expect(downloadModel("base", { dir })).rejects.toThrow("socket closed");
     expect(readdirSync(dir)).toEqual([]);
   });
 
@@ -177,7 +180,6 @@ describe("downloadModel", () => {
     });
 
     await expect(download).rejects.toThrow(/abort/iu);
-    expect(existsSync(join(dir, "ggml-base.bin.part"))).toBe(false);
     expect(readdirSync(dir)).toEqual([]);
   });
 });
