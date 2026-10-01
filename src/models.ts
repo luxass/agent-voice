@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
@@ -26,7 +26,7 @@ const MODEL_BASE_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/mai
 /** The one model directory, for downloads and discovery: `$AGENT_VOICE_MODEL_DIR`, else `~/.cache/whisper`. */
 export function modelDir(): string {
   const dir = process.env.AGENT_VOICE_MODEL_DIR;
-  return dir === undefined || dir === "" ? join(homedir(), ".cache", "whisper") : dir;
+  return dir == null || dir === "" ? join(homedir(), ".cache", "whisper") : dir;
 }
 
 /** The file a model named `name` (e.g. `base.en`) is stored as in `dir`. */
@@ -52,6 +52,27 @@ export function discoverLocalModels(dir = modelDir()): string[] {
     .map((entry) => join(dir, entry.name))
     .filter((path) => existsSync(path))
     .toSorted();
+}
+
+/** A model for a picker: installed in the model directory, or a curated download. */
+export type LocalModel = { name: string; path: string; installed: boolean; approxMB?: number };
+
+/** Installed models first, then the curated models that are not installed yet. */
+export function listLocalModels(dir = modelDir()): LocalModel[] {
+  const installed = discoverLocalModels(dir);
+  return [
+    ...installed.map((path) => ({
+      name: basename(path, ".bin").replace(/^ggml-/u, ""),
+      path,
+      installed: true,
+    })),
+    ...WHISPER_MODELS.map(({ name, approxMB }) => ({
+      name,
+      path: modelPath(name, dir),
+      installed: false,
+      approxMB,
+    })).filter(({ path }) => !installed.includes(path)),
+  ];
 }
 
 export type DownloadModelOptions = {

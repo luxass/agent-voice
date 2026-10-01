@@ -5,7 +5,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { testdir } from "vitest-testdirs";
 import { symlink } from "vitest-testdirs/helpers";
 
-import { discoverLocalModels, downloadModel, modelDir, modelPath } from "../src/models";
+import {
+  discoverLocalModels,
+  downloadModel,
+  listLocalModels,
+  modelDir,
+  modelPath,
+  WHISPER_MODELS,
+} from "../src/models";
 
 describe("discoverLocalModels", () => {
   it("finds ggml models sorted by name and skips other files", async () => {
@@ -64,6 +71,25 @@ describe("discoverLocalModels defaults", () => {
     vi.stubEnv("HOME", await testdir({}));
     vi.stubEnv("AGENT_VOICE_MODEL_DIR", "");
     expect(discoverLocalModels()).toEqual([]);
+  });
+});
+
+describe("listLocalModels", () => {
+  it("lists installed models first, then curated models that are not installed", async () => {
+    const dir = await testdir({ "ggml-base.en.bin": "", "ggml-custom.bin": "" });
+    const models = listLocalModels(dir);
+    expect(models.slice(0, 2)).toEqual([
+      { name: "base.en", path: join(dir, "ggml-base.en.bin"), installed: true },
+      { name: "custom", path: join(dir, "ggml-custom.bin"), installed: true },
+    ]);
+    expect(models.slice(2)).toEqual(
+      WHISPER_MODELS.filter(({ name }) => name !== "base.en").map(({ name, approxMB }) => ({
+        name,
+        path: join(dir, `ggml-${name}.bin`),
+        installed: false,
+        approxMB,
+      })),
+    );
   });
 });
 
