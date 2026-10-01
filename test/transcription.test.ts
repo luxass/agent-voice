@@ -81,7 +81,7 @@ describe("local transcription", () => {
     const { dir, wav } = await fixture();
     vi.stubEnv("HOME", dir);
     await expect(transcribe(wav, { type: "local" })).rejects.toThrow(
-      "No Whisper model found; configure a local model",
+      "No Whisper model found; download one or configure a local model",
     );
   });
 
