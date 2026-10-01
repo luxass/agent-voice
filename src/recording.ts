@@ -49,7 +49,7 @@ function soxArgs(input: InputDevice | undefined, file: string): string[] {
 /** The last stderr line, or `fallback` when stderr is blank. */
 function lastLine(stderr: string, fallback: string): string {
   const line = stderr.trim().split("\n").pop();
-  return line === undefined || line === "" ? fallback : line;
+  return line == null || line === "" ? fallback : line;
 }
 
 /** Spawn SoX into `file`. `onFailure` gets spawn errors, or the last stderr line if it exits. */
@@ -129,7 +129,7 @@ export function createRecorder(): Recorder {
 
   return {
     get isRecording() {
-      return active !== undefined;
+      return active != null;
     },
     start,
     stop,

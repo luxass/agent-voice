@@ -75,22 +75,21 @@ The host's device picker can save an `inputDevice` returned by `listInputDevices
 ## ⬇️ Models and doctor
 
 ```ts
-import { runDoctor, downloadModel, WHISPER_MODELS } from "@luxass/agent-voice";
+import { downloadModel, listLocalModels, runDoctor } from "@luxass/agent-voice";
 
-// Offer WHISPER_MODELS ({ name: "base.en", approxMB: 142 }, ...) in a picker, then:
-const controller = new AbortController();
-const path = await downloadModel(picked.name, {
-  signal: controller.signal,
-  onProgress: (received, total) => showProgress(received, total),
-});
+// Installed models, then curated downloads: { name, path, installed, approxMB? }
+const picked = await pickOne(listLocalModels());
+const model = picked.installed
+  ? picked.path
+  : await downloadModel(picked.name, { onProgress: (received, total) => show(received, total) });
 
-// Plain data for a "doctor" command: [{ id: "sox", ok: true, detail: "/usr/bin/sox" }, ...]
+// [{ id: "sox", ok: false, detail: "sox not found", fix: "brew install sox" }, ...]
 for (const check of await runDoctor(settings)) report(check);
 ```
 
 `downloadModel` fetches `ggml-<name>.bin` from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp) into `modelDir()`: `$AGENT_VOICE_MODEL_DIR`, else `~/.cache/whisper`. It writes to a unique `.part` file and renames it when complete, so a failed or aborted download is never discovered as a model. Model discovery looks only in `modelDir()`, so a downloaded model is used without changing settings. Models elsewhere need `AGENT_VOICE_MODEL_DIR` or an explicit `model` path in the profile.
 
-`runDoctor` checks what the active profile needs (`sox`, a saved input device, `whisper-cli` and a model for local profiles, the API key variable for API profiles) without recording or calling any API. Each check has an `id` hosts can use for their own wording and fix hints.
+`runDoctor` checks what the active profile needs (`sox`, a saved input device, `whisper-cli` and a model for local profiles, the API key variable for API profiles) without recording or calling any API. Failed checks carry a `fix`: an install hint for the current platform, or a step worded in terms of profiles. Hosts can swap in their own command for an `id`, such as a model picker command for `model`.
 
 ## 🧰 Requirements
 

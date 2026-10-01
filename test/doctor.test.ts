@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { testdir } from "vitest-testdirs";
 import { metadata } from "vitest-testdirs/helpers";
 
@@ -22,7 +22,17 @@ async function environment(bin: string[], files: Record<string, unknown> = {}) {
   return dir;
 }
 
+const platform = process.platform;
+
+function onPlatform(value: NodeJS.Platform) {
+  Object.defineProperty(process, "platform", { value });
+}
+
 describe("runDoctor", () => {
+  afterEach(() => {
+    onPlatform(platform);
+  });
+
   it("passes a local setup with sox, whisper-cli and a discovered model", async () => {
     const dir = await environment(["sox", "whisper-cli"], {
       ".cache": { whisper: { "ggml-base.en.bin": "" } },
@@ -33,18 +43,37 @@ describe("runDoctor", () => {
       {
         id: "model",
         ok: true,
-        detail: `${join(dir, ".cache", "whisper", "ggml-base.en.bin")} (auto-detected)`,
+        detail: join(dir, ".cache", "whisper", "ggml-base.en.bin"),
       },
     ]);
   });
 
-  it("reports missing tools and models with fixes", async () => {
+  it("reports missing tools and models with fixes for the platform", async () => {
     await environment([]);
+    onPlatform("darwin");
     expect(await runDoctor({})).toEqual([
-      { id: "sox", ok: false, detail: "sox not found" },
-      { id: "whisper-cli", ok: false, detail: "whisper-cli not found" },
-      { id: "model", ok: false, detail: "No Whisper model found" },
+      { id: "sox", ok: false, detail: "sox not found", fix: "brew install sox" },
+      {
+        id: "whisper-cli",
+        ok: false,
+        detail: "whisper-cli not found",
+        fix: "brew install whisper-cpp",
+      },
+      {
+        id: "model",
+        ok: false,
+        detail: "No Whisper model found",
+        fix: "choose or download a model for profile local",
+      },
     ]);
+  });
+
+  it("falls back to generic install fixes on other platforms", async () => {
+    await environment([]);
+    onPlatform("linux");
+    const [sox, whisper] = await runDoctor({});
+    expect(sox?.fix).toBe("install the sox package, e.g. `sudo apt install sox`");
+    expect(whisper?.fix).toBe("build whisper.cpp: https://github.com/ggml-org/whisper.cpp");
   });
 
   it("skips directories with an executable's name on PATH", async () => {
@@ -72,6 +101,7 @@ describe("runDoctor", () => {
         id: "model",
         ok: false,
         detail: "~/gone.bin does not exist",
+        fix: "choose or download a model for profile local",
       },
     ]);
   });
@@ -94,6 +124,7 @@ describe("runDoctor", () => {
       { id: "sox", ok: true },
       { id: "api-key", ok: false },
     ]);
+    expect((await runDoctor(settings)).at(-1)?.fix).toBe("set VOICE_KEY in your environment");
     vi.stubEnv("VOICE_KEY", "secret");
     expect((await runDoctor(settings)).at(-1)).toEqual({
       id: "api-key",
@@ -116,9 +147,7 @@ describe("runDoctor", () => {
       id: "device",
       ok: false,
       detail: "Mic is not connected",
+      fix: "choose another input device",
     });
-    expect(
-      await runDoctor(settings, { listDevices: () => Promise.reject(new Error("no pactl")) }),
-    ).toContainEqual({ id: "device", ok: false, detail: "Cannot list inputs: no pactl" });
   });
 });

@@ -43,26 +43,26 @@ function run(
 
 async function runWhisperCli(file: string, profile: LocalProfile): Promise<string> {
   const model = profile.model ?? discoverLocalModels()[0];
-  if (model === undefined)
+  if (model == null)
     throw new Error("No Whisper model found; download one or configure a local model");
   const modelPath = expandHome(model);
   if (!existsSync(modelPath)) throw new Error(`Whisper model not found at ${model}`);
   const args = ["-m", modelPath, "-f", file, "-l", profile.language ?? "auto", "-np", "-nt"];
   const { code, stdout, stderr } = await run(expandHome(profile.binary ?? "whisper-cli"), args);
   const [, language] = /error: unknown language '([^']+)'/u.exec(stderr) ?? [];
-  if (language !== undefined) throw new Error(`Unknown whisper language: ${language}`);
+  if (language != null) throw new Error(`Unknown whisper language: ${language}`);
   if (code !== 0) {
     const line = stderr.trim().split("\n").pop();
-    throw new Error(line === undefined || line === "" ? `Whisper exited (${code})` : line);
+    throw new Error(line == null || line === "" ? `Whisper exited (${code})` : line);
   }
   return stdout.replaceAll(/\s+/gu, " ").trim();
 }
 
 async function postAudio(file: string, profile: ApiProfile): Promise<string> {
   const headers: Record<string, string> = {};
-  if (profile.apiKeyEnv !== undefined) {
+  if (profile.apiKeyEnv != null) {
     const key = process.env[profile.apiKeyEnv];
-    if (key === undefined || key === "")
+    if (key == null || key === "")
       throw new Error(`Set ${profile.apiKeyEnv} to use the transcription API`);
     headers.Authorization = `Bearer ${key}`;
   }

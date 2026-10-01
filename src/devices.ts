@@ -56,7 +56,7 @@ function parseMacInputs(stdout: string): InputDevice[] {
       // eslint-disable-next-line no-underscore-dangle -- system_profiler key
       const name = item.coreaudio_device_name ?? item._name;
       const isInput = (item.coreaudio_device_input ?? 0) > 0 || item.coreaudio_input_source != null;
-      if (name !== undefined && name !== "" && isInput) names.add(name);
+      if (name != null && name !== "" && isInput) names.add(name);
     }
   }
   return [...names].map((name) => device("coreaudio", name));
@@ -66,7 +66,7 @@ function parseMacInputs(stdout: string): InputDevice[] {
 function parsePactlSources(stdout: string): InputDevice[] {
   return stdout.split("\n").flatMap((line) => {
     const [, name] = line.split("\t");
-    if (name === undefined || name === "" || name.endsWith(".monitor")) return [];
+    if (name == null || name === "" || name.endsWith(".monitor")) return [];
     return [device("pulseaudio", name)];
   });
 }
@@ -75,7 +75,7 @@ function parsePactlSources(stdout: string): InputDevice[] {
 function parseAlsaPcm(pcm: string): InputDevice[] {
   return pcm.split("\n").flatMap((line) => {
     const [, card, pcmDevice, name] = /^(\d+)-(\d+):\s*([^:]+):.*\bcapture\s+\d+/u.exec(line) ?? [];
-    if (card === undefined || pcmDevice === undefined || name === undefined) return [];
+    if (card == null || pcmDevice == null || name == null) return [];
     return [device("alsa", `plughw:${Number(card)},${Number(pcmDevice)}`, name.trim())];
   });
 }
@@ -85,7 +85,7 @@ function parseWaveAudioInputs(output: string): InputDevice[] {
   const inputs = new Map<string, InputDevice>();
   for (const match of output.matchAll(/Enumerating input device\s+(\d+):\s+"([^"]+)"/gu)) {
     const [, id, name] = match;
-    if (id === undefined || name === undefined) continue;
+    if (id == null || name == null) continue;
     inputs.set(id, device("waveaudio", id, name));
   }
   return [...inputs.values()];
