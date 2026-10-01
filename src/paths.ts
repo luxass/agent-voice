@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -9,8 +9,9 @@ export function expandHome(path: string): string {
 
 function isExecutable(path: string): boolean {
   try {
+    // X_OK also passes searchable directories; `statSync` follows symlinks to executables.
     accessSync(path, constants.X_OK);
-    return true;
+    return statSync(path).isFile();
   } catch {
     return false;
   }

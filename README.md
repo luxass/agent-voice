@@ -88,7 +88,7 @@ const path = await downloadModel(picked.name, {
 for (const check of await runDoctor(settings)) report(check);
 ```
 
-`downloadModel` fetches `ggml-<name>.bin` from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp) into `modelDir()`: `$AGENT_VOICE_MODEL_DIR`, else `~/.cache/whisper`. It writes to a `.part` file and renames it when complete, so a failed or aborted download is never discovered as a model. Model discovery looks only in `modelDir()`, so a downloaded model is used without changing settings. Models elsewhere need `AGENT_VOICE_MODEL_DIR` or an explicit `model` path in the profile.
+`downloadModel` fetches `ggml-<name>.bin` from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp) into `modelDir()`: `$AGENT_VOICE_MODEL_DIR`, else `~/.cache/whisper`. It writes to a unique `.part` file and renames it when complete, so a failed or aborted download is never discovered as a model. Model discovery looks only in `modelDir()`, so a downloaded model is used without changing settings. Models elsewhere need `AGENT_VOICE_MODEL_DIR` or an explicit `model` path in the profile.
 
 `runDoctor` checks what the active profile needs (`sox`, a saved input device, `whisper-cli` and a model for local profiles, the API key variable for API profiles) without recording or calling any API. Each check has an `id` hosts can use for their own wording and fix hints.
 

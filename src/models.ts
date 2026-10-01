@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -63,7 +64,7 @@ export type DownloadModelOptions = {
 
 /**
  * Download a whisper.cpp model from Hugging Face and return its path. The file is written
- * as `<path>.part` and renamed when complete; a failed or aborted download removes it, so a
+ * to a unique `<path>.<id>.part` and renamed when complete; a failed or aborted download removes it, so a
  * partial file is never discovered as a model. An existing model is overwritten.
  */
 export async function downloadModel(
@@ -72,15 +73,19 @@ export async function downloadModel(
 ): Promise<string> {
   if (!/^[\w.-]+$/u.test(name)) throw new Error(`Invalid Whisper model name: ${name}`);
   const target = modelPath(name, dir);
-  const partial = `${target}.part`;
+  // Unique per call, so concurrent downloads of one model never share a partial file.
+  const partial = `${target}.${randomUUID()}.part`;
 
+  await mkdir(dir, { recursive: true });
   const response = await fetch(`${MODEL_BASE_URL}/ggml-${name}.bin`, { signal });
-  if (!response.ok || !response.body)
+  if (!response.ok || !response.body) {
+    // Release the connection instead of leaving the error body unread.
+    await response.body?.cancel();
     throw new Error(`Downloading ${name} failed: HTTP ${response.status}`);
+  }
   const length = Number(response.headers.get("content-length"));
   const total = length > 0 ? length : undefined;
 
-  await mkdir(dir, { recursive: true });
   let received = 0;
   try {
     await pipeline(

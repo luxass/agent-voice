@@ -83,7 +83,7 @@ describe("modelDir", () => {
 });
 
 /** A streaming response of `chunks` with a matching Content-Length. */
-function respond(chunks: string[], status = 200) {
+function respond(chunks: string[]) {
   const bytes = chunks.map((chunk) => new TextEncoder().encode(chunk));
   const length = bytes.reduce((sum, chunk) => sum + chunk.byteLength, 0);
   const body = new ReadableStream<Uint8Array>({
@@ -92,7 +92,7 @@ function respond(chunks: string[], status = 200) {
       controller.close();
     },
   });
-  return new Response(body, { status, headers: { "content-length": String(length) } });
+  return new Response(body, { headers: { "content-length": String(length) } });
 }
 
 describe("downloadModel", () => {
@@ -136,13 +136,28 @@ describe("downloadModel", () => {
     await expect(downloadModel("../evil")).rejects.toThrow("Invalid Whisper model name");
   });
 
-  it("fails on HTTP errors without writing a file", async () => {
+  it("fails on HTTP errors without writing a file and releases the body", async () => {
     const dir = await testdir({});
-    vi.stubGlobal("fetch", () => Promise.resolve(respond(["nope"], 404)));
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    vi.stubGlobal("fetch", () => Promise.resolve(new Response(body, { status: 404 })));
     await expect(downloadModel("missing", { dir })).rejects.toThrow(
       "Downloading missing failed: HTTP 404",
     );
+    expect(cancel).toHaveBeenCalled();
     expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("keeps concurrent downloads of one model apart", async () => {
+    const dir = await testdir({});
+    vi.stubGlobal("fetch", () => Promise.resolve(respond(["mod", "el"])));
+    const paths = await Promise.all([
+      downloadModel("base", { dir }),
+      downloadModel("base", { dir }),
+    ]);
+    expect(paths).toEqual([join(dir, "ggml-base.bin"), join(dir, "ggml-base.bin")]);
+    expect(readFileSync(join(dir, "ggml-base.bin"), "utf8")).toBe("model");
+    expect(readdirSync(dir)).toEqual(["ggml-base.bin"]);
   });
 
   it("removes the partial file when the connection fails mid-download", async () => {

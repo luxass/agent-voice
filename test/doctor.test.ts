@@ -47,6 +47,19 @@ describe("runDoctor", () => {
     ]);
   });
 
+  it("skips directories with an executable's name on PATH", async () => {
+    const dir = await testdir({
+      shadow: { "whisper-cli": {} },
+      bin: { "whisper-cli": executable },
+    });
+    vi.stubEnv("PATH", `${join(dir, "shadow")}:${join(dir, "bin")}`);
+    expect(await runDoctor({})).toContainEqual({
+      id: "whisper-cli",
+      ok: true,
+      detail: join(dir, "bin", "whisper-cli"),
+    });
+  });
+
   it("checks a configured binary and model path, expanding ~/", async () => {
     const dir = await environment(["sox"], { tools: { whisper: executable } });
     const checks = await runDoctor({
