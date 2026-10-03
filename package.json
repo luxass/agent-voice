@@ -1,6 +1,6 @@
 {
   "name": "@luxass/agent-voice",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Host-independent audio recording, input device discovery, and Whisper transcription",
   "license": "MIT",
   "author": {
