@@ -1,118 +1,140 @@
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testdir } from "vitest-testdirs";
-import { metadata } from "vitest-testdirs/helpers";
 
+import type { VoiceSettings } from "../src/config";
 import type { InputDevice } from "../src/devices";
 import { runDoctor } from "../src/doctor";
 
-const executable = metadata("#!/bin/sh\n", { mode: 0o755 });
-const mic: InputDevice = { id: "coreaudio:Mic", name: "Mic", format: "coreaudio", source: "Mic" };
+const native = vi.hoisted(() => ({
+  listInputDevices: vi.fn<() => Promise<{ id: string; name: string; isMonitor: boolean }[]>>(),
+  getAvailableBackends: vi.fn<() => { name: string }[]>(),
+}));
 
-/** HOME and PATH pointed at a test directory with the given executables in `bin/`. */
-async function environment(bin: string[], files: Record<string, unknown> = {}) {
-  const dir = await testdir({
-    bin: Object.fromEntries(bin.map((name) => [name, executable])),
-    ...files,
-  });
+vi.mock("@handy-computer/recorder", () => ({
+  listInputDevices: native.listInputDevices,
+}));
+vi.mock("transcribe-cpp", () => ({
+  getAvailableBackends: native.getAvailableBackends,
+}));
+
+const mic: InputDevice = { id: "mic-id", name: "Mic" };
+
+async function environment(files: Parameters<typeof testdir>[0] = {}) {
+  const dir = await testdir(files);
   vi.stubEnv("HOME", dir);
-  vi.stubEnv("PATH", join(dir, "bin"));
+  vi.stubEnv("PATH", "");
   vi.stubEnv("AGENT_VOICE_MODEL_DIR", "");
   return dir;
 }
 
-const platform = process.platform;
+beforeEach(() => {
+  native.listInputDevices.mockReset().mockResolvedValue([{ ...mic, isMonitor: false }]);
+  native.getAvailableBackends.mockReset().mockReturnValue([{ name: "CPU" }]);
+});
 
-function onPlatform(value: NodeJS.Platform) {
-  Object.defineProperty(process, "platform", { value });
-}
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("runDoctor", () => {
-  afterEach(() => {
-    onPlatform(platform);
-  });
-
-  it("passes a local setup with sox, whisper-cli and a discovered model", async () => {
-    const dir = await environment(["sox", "whisper-cli"], {
-      ".cache": { whisper: { "ggml-base.en.bin": "" } },
+  it("passes native capture and inference with a discovered GGUF model and no CLI tools", async () => {
+    const dir = await environment({
+      ".cache": { "agent-voice": { "whisper-small.gguf": "" } },
     });
     expect(await runDoctor()).toEqual([
-      { id: "sox", ok: true, detail: join(dir, "bin", "sox") },
-      { id: "whisper-cli", ok: true, detail: join(dir, "bin", "whisper-cli") },
+      { id: "device", ok: true, detail: "System default input" },
+      { id: "inference", ok: true, detail: "CPU" },
       {
         id: "model",
         ok: true,
-        detail: join(dir, ".cache", "whisper", "ggml-base.en.bin"),
+        detail: join(dir, ".cache", "agent-voice", "whisper-small.gguf"),
       },
     ]);
   });
 
-  it("reports missing tools and models with fixes for the platform", async () => {
-    await environment([]);
-    onPlatform("darwin");
+  it("reports missing microphones, inference bindings and models", async () => {
+    await environment();
+    native.listInputDevices.mockResolvedValue([]);
+    native.getAvailableBackends.mockImplementation(() => {
+      throw new Error("Native inference binding missing");
+    });
     expect(await runDoctor()).toEqual([
-      { id: "sox", ok: false, detail: "sox not found", fix: "brew install sox" },
       {
-        id: "whisper-cli",
+        id: "device",
         ok: false,
-        detail: "whisper-cli not found",
-        fix: "brew install whisper-cpp",
+        detail: "No input devices found",
+        fix: "connect a microphone",
+      },
+      {
+        id: "inference",
+        ok: false,
+        detail: "Native inference binding missing",
+        fix: `check native inference support for ${process.platform}/${process.arch}`,
       },
       {
         id: "model",
         ok: false,
-        detail: "No Whisper model found",
+        detail: "No GGUF model found",
         fix: "choose or download a model for profile local",
       },
     ]);
   });
 
-  it("falls back to generic install fixes on other platforms", async () => {
-    await environment([]);
-    onPlatform("linux");
-    const [sox, whisper] = await runDoctor();
-    expect(sox?.fix).toBe("install the sox package, e.g. `sudo apt install sox`");
-    expect(whisper?.fix).toBe("build whisper.cpp: https://github.com/ggml-org/whisper.cpp");
-  });
-
-  it("skips directories with an executable's name on PATH", async () => {
-    const dir = await testdir({
-      shadow: { "whisper-cli": {} },
-      bin: { "whisper-cli": executable },
+  it("rejects local inference under Bun without loading the native binding", async () => {
+    await environment();
+    vi.stubGlobal("process", {
+      ...process,
+      versions: { ...process.versions, bun: "1.4.2" },
     });
-    vi.stubEnv("PATH", `${join(dir, "shadow")}:${join(dir, "bin")}`);
     expect(await runDoctor()).toContainEqual({
-      id: "whisper-cli",
-      ok: true,
-      detail: join(dir, "bin", "whisper-cli"),
+      id: "inference",
+      ok: false,
+      detail: "transcribe-cpp 0.2.4 is not supported in Bun",
+      fix: "use an API profile",
+    });
+    expect(native.getAvailableBackends).not.toHaveBeenCalled();
+  });
+
+  it("reports a native binding with no registered inference backends", async () => {
+    await environment();
+    native.getAvailableBackends.mockReturnValue([]);
+    expect(await runDoctor()).toContainEqual({
+      id: "inference",
+      ok: false,
+      detail: "No native inference backends found",
+      fix: "check native inference support for this platform",
     });
   });
 
-  it("checks a configured binary and model path, expanding ~/", async () => {
-    const dir = await environment(["sox"], { tools: { whisper: executable } });
-    const checks = await runDoctor({
+  it("checks a configured GGUF model path, expanding ~/", async () => {
+    await environment({ models: { "custom.gguf": "" } });
+    const settings: VoiceSettings = {
       activeProfile: "local",
-      profiles: { local: { type: "local", binary: "~/tools/whisper", model: "~/gone.bin" } },
+      profiles: { local: { type: "local", model: "~/models/custom.gguf" } },
+    };
+    expect(await runDoctor(settings)).toContainEqual({
+      id: "model",
+      ok: true,
+      detail: "~/models/custom.gguf",
     });
-    expect(checks.slice(1)).toEqual([
-      { id: "whisper-cli", ok: true, detail: join(dir, "tools", "whisper") },
-      {
-        id: "model",
-        ok: false,
-        detail: "~/gone.bin does not exist",
-        fix: "choose or download a model for profile local",
-      },
-    ]);
+    settings.profiles.local = { type: "local", model: "~/gone.gguf" };
+    expect(await runDoctor(settings)).toContainEqual({
+      id: "model",
+      ok: false,
+      detail: "~/gone.gguf does not exist",
+      fix: "choose or download a model for profile local",
+    });
   });
 
-  it("checks the API key variable instead of local tools for API profiles", async () => {
-    await environment(["sox"]);
-    const settings = {
+  it("checks API key variables without loading local inference", async () => {
+    await environment();
+    const settings: VoiceSettings = {
       activeProfile: "remote",
       profiles: {
         remote: {
-          type: "api" as const,
+          type: "api",
           endpoint: "https://stt.example.com",
           model: "whisper-1",
           apiKeyEnv: "VOICE_KEY",
@@ -121,7 +143,7 @@ describe("runDoctor", () => {
     };
     vi.stubEnv("VOICE_KEY", "");
     expect((await runDoctor(settings)).map(({ id, ok }) => ({ id, ok }))).toEqual([
-      { id: "sox", ok: true },
+      { id: "device", ok: true },
       { id: "api-key", ok: false },
     ]);
     expect((await runDoctor(settings)).at(-1)?.fix).toBe("set VOICE_KEY in your environment");
@@ -131,14 +153,15 @@ describe("runDoctor", () => {
       ok: true,
       detail: "VOICE_KEY is set",
     });
+    expect(native.getAvailableBackends).not.toHaveBeenCalled();
   });
 
-  it("verifies a saved input device is still connected", async () => {
-    await environment(["sox"]);
-    const settings = {
+  it("verifies a saved microphone is still connected", async () => {
+    await environment();
+    const settings: VoiceSettings = {
       inputDevice: mic,
       activeProfile: "remote",
-      profiles: { remote: { type: "api" as const, endpoint: "https://x.test", model: "m" } },
+      profiles: { remote: { type: "api", endpoint: "https://x.test", model: "m" } },
     };
     expect(await runDoctor(settings, { listDevices: () => Promise.resolve([mic]) })).toContainEqual(
       { id: "device", ok: true, detail: "Mic" },
@@ -148,6 +171,32 @@ describe("runDoctor", () => {
       ok: false,
       detail: "Mic is not connected",
       fix: "choose another input device",
+    });
+  });
+
+  it("reports native microphone enumeration errors as diagnostics", async () => {
+    await environment();
+    native.listInputDevices.mockRejectedValue(new Error("Capture binding unavailable"));
+    expect(await runDoctor()).toContainEqual({
+      id: "device",
+      ok: false,
+      detail: "Capture binding unavailable",
+      fix: `check native recorder support for ${process.platform}/${process.arch}`,
+    });
+  });
+
+  it("rejects old whisper.cpp binary models", async () => {
+    await environment({ models: { "ggml-old.bin": "" } });
+    expect(
+      await runDoctor({
+        activeProfile: "local",
+        profiles: { local: { type: "local", model: "~/models/ggml-old.bin" } },
+      }),
+    ).toContainEqual({
+      id: "model",
+      ok: false,
+      detail: "~/models/ggml-old.bin is not a GGUF model",
+      fix: "choose or download a model for profile local",
     });
   });
 });

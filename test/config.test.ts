@@ -12,10 +12,10 @@ import {
 } from "../src/config";
 
 const SETTINGS: VoiceSettings = {
-  inputDevice: { id: "coreaudio:Mic", name: "Mic", format: "coreaudio", source: "Mic" },
+  inputDevice: { id: "mic-id", name: "Mic" },
   activeProfile: "remote",
   profiles: {
-    local: { type: "local", model: "~/.cache/whisper/ggml-base.bin", binary: "~/bin/whisper-cli" },
+    local: { type: "local", model: "~/.cache/agent-voice/whisper-small.gguf", language: "da" },
     remote: {
       type: "api",
       endpoint: "https://stt.example.com/v1",
@@ -25,22 +25,24 @@ const SETTINGS: VoiceSettings = {
   },
 };
 
-/** Write `settings` as a settings file and return its path. */
-async function settingsFile(settings: unknown): Promise<string> {
-  const dir = await testdir({ "voice.json": JSON.stringify(settings) });
-  return join(dir, "voice.json");
-}
-
 describe("loadVoiceSettings", () => {
   it("treats a missing file as no settings", async () => {
-    expect(loadVoiceSettings(join(await testdir({}), "voice.json"))).toEqual({
+    const testdirPath = await testdir();
+    const voiceSettingsFilePath = join(testdirPath, "voice.json");
+
+    expect(loadVoiceSettings(voiceSettingsFilePath)).toEqual({
       settings: undefined,
       errors: [],
     });
   });
 
   it("returns settings exactly as written, without defaults or path expansion", async () => {
-    expect(loadVoiceSettings(await settingsFile(SETTINGS))).toEqual({
+    const testdirPath = await testdir({
+      "voice.json": JSON.stringify(SETTINGS),
+    });
+    const voiceSettingsFilePath = join(testdirPath, "voice.json");
+
+    expect(loadVoiceSettings(voiceSettingsFilePath)).toEqual({
       settings: SETTINGS,
       errors: [],
     });
@@ -72,12 +74,17 @@ describe("loadVoiceSettings", () => {
       "/profiles/r",
     ],
     [
-      "an unsupported device format",
-      { ...SETTINGS, inputDevice: { id: "jack:x", name: "x", format: "jack", source: "x" } },
-      "/inputDevice/format",
+      "an empty native device ID",
+      { ...SETTINGS, inputDevice: { id: "", name: "Mic" } },
+      "/inputDevice/id",
     ],
   ])("returns validation results for %s", async (_case, settings, errorPath) => {
-    const result = loadVoiceSettings(await settingsFile(settings));
+    const testdirPath = await testdir({
+      "voice.json": JSON.stringify(settings),
+    });
+    const voiceSettingsFilePath = join(testdirPath, "voice.json");
+
+    const result = loadVoiceSettings(voiceSettingsFilePath);
     if (errorPath === undefined) {
       expect(result).toEqual({ settings, errors: [] });
     } else {
@@ -97,7 +104,12 @@ describe("loadVoiceSettings", () => {
       { activeProfile: "constructor", profiles: { l: { type: "local" } } },
     ],
   ])("returns errors for %s", async (_case, settings) => {
-    const result = loadVoiceSettings(await settingsFile(settings));
+    const testdirPath = await testdir({
+      "voice.json": JSON.stringify(settings),
+    });
+    const voiceSettingsFilePath = join(testdirPath, "voice.json");
+
+    const result = loadVoiceSettings(voiceSettingsFilePath);
     expect(result.settings).toBeUndefined();
     expect(result.errors.length).toBeGreaterThan(0);
   });
@@ -105,6 +117,7 @@ describe("loadVoiceSettings", () => {
   it("returns a parse error for malformed JSON", async () => {
     const dir = await testdir({ "voice.json": "{ nope" });
     const result = loadVoiceSettings(join(dir, "voice.json"));
+
     expect(result.settings).toBeUndefined();
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]?.path).toBe("/");
@@ -113,10 +126,14 @@ describe("loadVoiceSettings", () => {
 
 describe("saveVoiceSettings", () => {
   it("writes formatted JSON that loads back unchanged", async () => {
-    const path = join(await testdir({}), "voice.json");
-    saveVoiceSettings(path, SETTINGS);
-    expect(readFileSync(path, "utf8")).toBe(`${JSON.stringify(SETTINGS, null, 2)}\n`);
-    expect(loadVoiceSettings(path)).toEqual({ settings: SETTINGS, errors: [] });
+    const testdirPath = await testdir();
+    const voiceSettingsFilePath = join(testdirPath, "voice.json");
+
+    saveVoiceSettings(voiceSettingsFilePath, SETTINGS);
+    expect(readFileSync(voiceSettingsFilePath, "utf8")).toBe(
+      `${JSON.stringify(SETTINGS, null, 2)}\n`,
+    );
+    expect(loadVoiceSettings(voiceSettingsFilePath)).toEqual({ settings: SETTINGS, errors: [] });
   });
 });
 

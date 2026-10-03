@@ -1,3 +1,5 @@
+export { AUDIO_SAMPLE_RATE, encodeWav } from "./audio";
+export type { RecordedAudio } from "./audio";
 export {
   getActiveProfile,
   loadVoiceSettings,
@@ -22,9 +24,15 @@ export {
   listLocalModels,
   modelDir,
   modelPath,
-  WHISPER_MODELS,
+  MODEL_CATALOG,
 } from "./models";
-export type { DownloadModelOptions, LocalModel, WhisperModel } from "./models";
+export type { DownloadModelOptions, DownloadableModel, LocalModel } from "./models";
 export { createRecorder } from "./recording";
-export type { Recorder } from "./recording";
-export { transcribe } from "./transcription";
+export type { Recorder, RecordingOptions } from "./recording";
+export { createTranscriber, transcribe } from "./transcription";
+export type {
+  Transcriber,
+  TranscriptText,
+  TranscriptionOptions,
+  TranscriptionStream,
+} from "./transcription";

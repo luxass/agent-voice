@@ -3,59 +3,97 @@ import { existsSync } from "node:fs";
 import { getActiveProfile, type TranscriptionProfile, type VoiceSettings } from "./config";
 import { listInputDevices, type InputDevice } from "./devices";
 import { discoverLocalModels } from "./models";
-import { expandHome, findExecutable } from "./paths";
+import { expandHome } from "./paths";
 
-export type DoctorCheckId = "sox" | "device" | "whisper-cli" | "model" | "api-key";
+export type DoctorCheckId = "device" | "inference" | "model" | "api-key";
 
-/** One setup check. Failed checks carry a `fix`; hosts can swap in their own command by `id`. */
+/**
+ * One setup check. Failed checks carry a `fix`; hosts can swap in their own command by `id`.
+ */
 export type DoctorCheck = { id: DoctorCheckId; ok: boolean; detail: string; fix?: string };
 
 export type DoctorOptions = {
-  /** Lists inputs to verify a saved device. Defaults to `listInputDevices`. */
+  /**
+   * Lists inputs to verify a saved device. Defaults to `listInputDevices`.
+   */
   listDevices?: () => Promise<InputDevice[]>;
 };
 
-const INSTALL: Record<"sox" | "whisper-cli", Record<string, string>> = {
-  sox: {
-    darwin: "brew install sox",
-    linux: "install the sox package, e.g. `sudo apt install sox`",
-    other: "install SoX: https://sourceforge.net/projects/sox/",
-  },
-  "whisper-cli": {
-    darwin: "brew install whisper-cpp",
-    other: "build whisper.cpp: https://github.com/ggml-org/whisper.cpp",
-  },
-};
-
-function checkExecutable(id: "sox" | "whisper-cli", command: string): DoctorCheck {
-  const path = findExecutable(command);
-  return {
-    id,
-    ok: path != null,
-    detail: path ?? `${command} not found`,
-    fix: path == null ? (INSTALL[id][process.platform] ?? INSTALL[id].other) : undefined,
-  };
+async function checkInference(): Promise<DoctorCheck> {
+  // oxlint-disable-next-line typescript/strict-boolean-expressions
+  if (process.versions.bun)
+    return {
+      id: "inference",
+      ok: false,
+      detail: "transcribe-cpp 0.2.4 is not supported in Bun",
+      fix: "use an API profile",
+    };
+  try {
+    const { getAvailableBackends } = await import("transcribe-cpp");
+    const backends = getAvailableBackends();
+    return {
+      id: "inference",
+      ok: backends.length > 0,
+      detail:
+        backends.length > 0
+          ? backends.map(({ name }) => name).join(", ")
+          : "No native inference backends found",
+      fix: backends.length > 0 ? undefined : "check native inference support for this platform",
+    };
+  } catch (error) {
+    return {
+      id: "inference",
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+      fix: `check native inference support for ${process.platform}/${process.arch}`,
+    };
+  }
 }
 
 async function checkDevice(
-  device: InputDevice,
+  device: InputDevice | undefined,
   listDevices: () => Promise<InputDevice[]>,
 ): Promise<DoctorCheck> {
-  const ok = (await listDevices()).some((candidate) => candidate.id === device.id);
-  return {
-    id: "device",
-    ok,
-    detail: ok ? device.name : `${device.name} is not connected`,
-    fix: ok ? undefined : "choose another input device",
-  };
+  try {
+    const devices = await listDevices();
+    const ok = device
+      ? devices.some((candidate) => candidate.id === device.id)
+      : devices.length > 0;
+    return {
+      id: "device",
+      ok,
+      detail: device
+        ? ok
+          ? device.name
+          : `${device.name} is not connected`
+        : ok
+          ? "System default input"
+          : "No input devices found",
+      fix: ok ? undefined : device ? "choose another input device" : "connect a microphone",
+    };
+  } catch (error) {
+    return {
+      id: "device",
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+      fix: `check native recorder support for ${process.platform}/${process.arch}`,
+    };
+  }
 }
 
 function checkModel(name: string, model = discoverLocalModels()[0]): DoctorCheck {
-  const ok = model != null && existsSync(expandHome(model));
+  const ok = model != null && model.endsWith(".gguf") && existsSync(expandHome(model));
   return {
     id: "model",
     ok,
-    detail: model == null ? "No Whisper model found" : ok ? model : `${model} does not exist`,
+    detail:
+      model == null
+        ? "No GGUF model found"
+        : model.endsWith(".gguf")
+          ? ok
+            ? model
+            : `${model} does not exist`
+          : `${model} is not a GGUF model`,
     fix: ok ? undefined : `choose or download a model for profile ${name}`,
   };
 }
@@ -71,18 +109,18 @@ function checkApiKey(env: string): DoctorCheck {
   };
 }
 
-function checkProfile(name: string, profile: TranscriptionProfile): DoctorCheck[] {
-  if (profile.type === "local")
-    return [
-      checkExecutable("whisper-cli", profile.binary ?? "whisper-cli"),
-      checkModel(name, profile.model),
-    ];
+async function checkProfile(name: string, profile: TranscriptionProfile): Promise<DoctorCheck[]> {
+  if (profile.type === "local") return [await checkInference(), checkModel(name, profile.model)];
   return profile.apiKeyEnv == null ? [] : [checkApiKey(profile.apiKeyEnv)];
 }
 
 /**
- * Check what the active profile needs to record and transcribe, without recording or
- * calling any API. Only checks that apply to the settings are returned.
+ * Check readiness without recording or calling a transcription API.
+ *
+ * @param {VoiceSettings} [settings] - Omit to check the default local profile.
+ * @param {DoctorOptions} [options] - Optional device enumeration override.
+ * @returns Checks applicable to the active profile, with a suggested fix for failures.
+ * @throws If the active profile is absent from `profiles`.
  */
 export async function runDoctor(
   settings?: VoiceSettings,
@@ -90,8 +128,7 @@ export async function runDoctor(
 ): Promise<DoctorCheck[]> {
   const { name, transcription } = getActiveProfile(settings);
   return [
-    checkExecutable("sox", "sox"),
-    ...(settings?.inputDevice ? [await checkDevice(settings.inputDevice, listDevices)] : []),
-    ...checkProfile(name, transcription),
+    await checkDevice(settings?.inputDevice, listDevices),
+    ...(await checkProfile(name, transcription)),
   ];
 }
