@@ -1,7 +1,7 @@
 {
   "name": "@luxass/agent-voice",
   "version": "0.4.0",
-  "description": "Host-independent audio recording, input device discovery, and Whisper transcription",
+  "description": "Host-independent native microphone capture, input device discovery, and local or API transcription",
   "license": "MIT",
   "author": {
     "name": "Lucas Nørgård",
