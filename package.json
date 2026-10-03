@@ -1,6 +1,6 @@
 {
   "name": "@luxass/agent-voice",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Host-independent native microphone capture, input device discovery, and local or API transcription",
   "license": "MIT",
   "author": {
