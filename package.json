@@ -42,7 +42,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "typebox": "catalog:"
+    "@handy-computer/recorder": "catalog:runtime",
+    "transcribe-cpp": "catalog:runtime",
+    "typebox": "catalog:runtime"
   },
   "devDependencies": {
     "@types/node": "catalog:dev",
