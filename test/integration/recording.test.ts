@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createRecorder, type Recorder } from "../../src";
 
-describe.runIf(process.platform === "linux")("Linux Recording", () => {
+describe.runIf(process.platform === "linux" || process.platform === "darwin")("Recording", () => {
   let recorder: Recorder;
 
   beforeEach(async () => {
