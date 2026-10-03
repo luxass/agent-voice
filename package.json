@@ -1,7 +1,7 @@
 {
   "name": "@luxass/agent-voice",
   "version": "0.4.0",
-  "description": "Host-independent audio recording, input device discovery, and Whisper transcription",
+  "description": "Host-independent native microphone capture, input device discovery, and local or API transcription",
   "license": "MIT",
   "author": {
     "name": "Lucas Nørgård",
@@ -34,7 +34,8 @@
   },
   "scripts": {
     "build": "tsdown",
-    "test": "vitest run",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
@@ -42,7 +43,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "typebox": "catalog:"
+    "@handy-computer/recorder": "catalog:runtime",
+    "transcribe-cpp": "catalog:runtime",
+    "typebox": "catalog:runtime"
   },
   "devDependencies": {
     "@types/node": "catalog:dev",

@@ -14,6 +14,7 @@ export default defineConfig({
   },
   rules: {
     "eslint/no-await-in-loop": "off",
+    "eslint/require-await": "off",
     "no-console": ["error", { allow: ["error"] }],
     "no-shadow": "off",
     "eslint/eqeqeq": ["warn", "always", { null: "ignore" }],
@@ -29,9 +30,18 @@ export default defineConfig({
   },
   overrides: [
     {
+      files: ["src/recording.ts", "src/transcription.ts"],
+      rules: {
+        // Keep session state and its handlers in the same factory.
+        "max-lines-per-function": ["warn", { max: 150 }],
+      },
+    },
+    {
       files: ["test/**/*"],
       rules: {
         "max-lines-per-function": "off",
+        "max-lines": "off",
+        "max-classes-per-file": "off",
       },
     },
     {

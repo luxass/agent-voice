@@ -1,130 +1,145 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import type { Recorder as HandyRecorder, Recording } from "@handy-computer/recorder";
 
+import { AUDIO_SAMPLE_RATE, type RecordedAudio } from "./audio";
 import type { InputDevice } from "./devices";
 
-export type Recorder = {
-  /** Whether a recording is currently in progress. */
-  readonly isRecording: boolean;
+export type RecordingOptions = {
   /**
-   * Start recording from `input`, or the system default. Throws if already recording.
-   * `onError` fires if the recording fails in the background (e.g. the device disappears).
+   * A device from `listInputDevices()`. Omit for the system default; unavailable IDs reject.
    */
-  start: (input: InputDevice | undefined, onError: (error: Error) => void) => void;
-  /** Stop recording and return the WAV file path. The caller owns the file; delete it with `discard`. */
-  stop: () => Promise<string>;
-  /** Abort the in-progress recording, if any, and delete its file. Safe to call when idle. */
-  cancel: () => void;
-  /** Delete a file previously returned by `stop()`. Best-effort; never throws. */
-  discard: (file: string) => void;
+  input?: InputDevice;
+  /**
+   * Read-only mono PCM at 16 kHz in 480-sample chunks; the last chunk can be shorter.
+   * Throwing aborts capture and reports the error through `onError`.
+   */
+  onFrame?: (frame: Float32Array) => void;
+  /**
+   * Reports a native failure or frame callback failure after closing the device.
+   */
+  onError: (error: Error) => void;
 };
 
-const STOP_TIMEOUT_MS = 2000;
+export type Recorder = {
+  /**
+   * Whether a capture session is active, including startup and shutdown.
+   */
+  readonly isRecording: boolean;
+  /**
+   * Open the microphone and start capture.
+   *
+   * @param {RecordingOptions} options - Input device and frame/error callbacks.
+   * @throws If capture is already active or device startup fails.
+   */
+  start: (options: RecordingOptions) => Promise<void>;
+  /**
+   * Finish frame callbacks and close the microphone.
+   *
+   * @returns The complete captured PCM.
+   * @throws If capture is incomplete, the device fails to close, or the recorder is idle.
+   */
+  stop: () => Promise<RecordedAudio>;
+  /**
+   * Close and discard capture. Safe when idle; waits for an opening device.
+   *
+   * @throws If opening or closing the device fails.
+   */
+  cancel: () => Promise<void>;
+};
 
-type Recording = { child: ChildProcess; file: string };
-
-/** Best-effort delete; never throws. */
-function discard(file: string): void {
-  rmSync(file, { force: true });
-}
-
-/** SoX args that record from `input` (system default when `undefined`) into `file`. */
-function soxArgs(input: InputDevice | undefined, file: string): string[] {
-  return [
-    ...(input ? ["-t", input.format, input.source] : ["-d"]),
-    // Whisper expects 16kHz mono 16-bit audio.
-    "-r",
-    "16000",
-    "-c",
-    "1",
-    "-b",
-    "16",
-    file,
-  ];
-}
-
-/** The last stderr line, or `fallback` when stderr is blank. */
-function lastLine(stderr: string, fallback: string): string {
-  const line = stderr.trim().split("\n").pop();
-  return line == null || line === "" ? fallback : line;
-}
-
-/** Spawn SoX into `file`. `onFailure` gets spawn errors, or the last stderr line if it exits. */
-function spawnSox(
-  input: InputDevice | undefined,
-  file: string,
-  onFailure: (error: Error) => void,
-): ChildProcess {
-  const child = spawn("sox", soxArgs(input, file), { stdio: ["ignore", "ignore", "pipe"] });
-  let stderr = "";
-  child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString();
-  });
-  child.on("error", onFailure);
-  child.on("exit", (code) => {
-    onFailure(new Error(lastLine(stderr, `Recorder exited (${code})`)));
-  });
-  return child;
-}
-
-/** SIGINT makes SoX finalize its WAV; SIGKILL it if that takes too long. */
-function interrupt(child: ChildProcess): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error("Recorder did not stop in time"));
-    }, STOP_TIMEOUT_MS);
-    child.once("close", (code, signal) => {
-      clearTimeout(timer);
-      if (code === 0 || signal === "SIGINT") resolve();
-      else reject(new Error(`Recorder exited (${code ?? signal})`));
-    });
-    child.kill("SIGINT");
-  });
-}
-
-/** Record with `sox`, resolved via `PATH`. */
-export function createRecorder(): Recorder {
-  let active: Recording | undefined;
-
-  /** Detach and forget the active recording, so late events have no listener to fire. */
-  function release(): Recording | undefined {
-    const current = active;
-    active = undefined;
-    current?.child.removeAllListeners();
-    return current;
+function recordedAudio(recording: Recording): RecordedAudio {
+  if (!recording.complete) {
+    const reason = recording.endReason;
+    switch (reason.kind) {
+      case "recorderFailed":
+        throw reason.error;
+      case "sinkPanicked":
+        throw new Error(`Audio capture failed: ${reason.message}`);
+      case "stopCalled":
+        throw new Error(`Recording dropped ${recording.droppedFrames} audio frames`);
+    }
   }
+  return { sampleRate: AUDIO_SAMPLE_RATE, pcm: recording.samples };
+}
 
-  function start(input: InputDevice | undefined, onError: (error: Error) => void): void {
+/**
+ * Load the native recording binding.
+ *
+ * @returns A recorder whose microphone opens when `start()` is called.
+ * @throws If the native binding cannot be loaded.
+ */
+export async function createRecorder(): Promise<Recorder> {
+  const { Recorder: NativeRecorder, SPEECH } = await import("@handy-computer/recorder");
+  let active: Promise<HandyRecorder> | undefined;
+
+  async function start(options: RecordingOptions): Promise<void> {
     if (active) throw new Error("Already recording");
-    const file = join(tmpdir(), `agent-voice-${randomUUID()}.wav`);
-    // Releasing first also stops the paired `error`/`exit` event from reporting twice.
-    const child = spawnSox(input, file, (error) => {
-      release();
-      discard(file);
-      onError(error);
-    });
-    active = { child, file };
-  }
 
-  async function stop(): Promise<string> {
-    const current = release();
-    if (!current) throw new Error("No recording in progress");
-    await interrupt(current.child).catch((error: unknown) => {
-      discard(current.file);
+    function fail(error: unknown): void {
+      if (active !== session) return;
+      active = undefined;
+      void session
+        .then((device) => device.close())
+        .then(
+          () => {
+            options.onError(error instanceof Error ? error : new Error(String(error)));
+          },
+          (closeError: unknown) => {
+            options.onError(
+              closeError instanceof Error ? closeError : new Error(String(closeError)),
+            );
+          },
+        );
+    }
+
+    const session = NativeRecorder.open({
+      ...SPEECH,
+      device: options.input?.id,
+      onChunk({ samples }) {
+        if (active !== session) return;
+        try {
+          options.onFrame?.(samples);
+        } catch (error) {
+          fail(error);
+        }
+      },
+      onFailure: fail,
+    }).then(async (device) => {
+      try {
+        device.start();
+        return device;
+      } catch (error) {
+        await device.close();
+        throw error;
+      }
+    });
+
+    active = session;
+    try {
+      await session;
+    } catch (error) {
+      if (active === session) active = undefined;
       throw error;
-    });
-    return current.file;
+    }
   }
 
-  function cancel(): void {
-    const current = release();
-    if (!current) return;
-    current.child.kill("SIGKILL");
-    discard(current.file);
+  async function stop(): Promise<RecordedAudio> {
+    const session = active;
+    if (!session) throw new Error("No recording in progress");
+    const device = await session;
+    try {
+      return recordedAudio(await device.stop());
+    } finally {
+      if (active === session) active = undefined;
+      await device.close();
+    }
+  }
+
+  async function cancel(): Promise<void> {
+    const session = active;
+    if (!session) return;
+    active = undefined;
+    const device = await session;
+    await device.close();
   }
 
   return {
@@ -134,6 +149,5 @@ export function createRecorder(): Recorder {
     start,
     stop,
     cancel,
-    discard,
   };
 }

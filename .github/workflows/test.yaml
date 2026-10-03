@@ -19,3 +19,104 @@ jobs:
     with:
       node-version: 24
       pre-test-script: "build"
+
+  test-integration:
+    name: integration test (${{ matrix.os }})
+    runs-on: ${{ matrix.os}}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    steps:
+      - uses: luxass/shared-workflows/actions/setup@3a2dc4e52b786682a0f0fba65eca46b49b7b5c8b # actions/setup/v0.1.5
+        with:
+          node-version: 24
+
+      - name: install virtual audio tools (linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends pulseaudio pulseaudio-utils
+
+      - name: setup up the default virtual microphone (linux)
+        if: runner.os == 'Linux'
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=voice_output rate=48000 channels=2
+          pactl load-module module-remap-source master=voice_output.monitor source_name=voice_input rate=48000 channels=2 remix=no
+          pactl set-default-source voice_input
+          pactl get-default-source
+
+      - name: install virtual audio tools (macos)
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask blackhole-2ch
+          brew install switchaudio-osx
+
+      - name: set up the default virtual microphone (macos)
+        if: runner.os == 'macOS'
+        run: |
+          sudo killall -9 coreaudiod
+          for attempt in {1..30}; do
+            if SwitchAudioSource -a -t input | grep -Fxq "BlackHole 2ch"; then
+              break
+            fi
+            sleep 1
+          done
+          SwitchAudioSource -t input -s "BlackHole 2ch"
+          SwitchAudioSource -t output -s "BlackHole 2ch"
+          test "$(SwitchAudioSource -c -t input)" = "BlackHole 2ch"
+          test "$(SwitchAudioSource -c -t output)" = "BlackHole 2ch"
+
+      - name: create test audio
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        run: |
+          python3 - <<'PY'
+          import math
+          import os
+          import struct
+          import wave
+
+          with wave.open(os.path.join(os.environ["RUNNER_TEMP"], "voice.wav"), "wb") as audio:
+              audio.setnchannels(2)
+              audio.setsampwidth(2)
+              audio.setframerate(48000)
+              samples = bytearray()
+              for frame in range(48000):
+                  sample = int(8192 * math.sin(2 * math.pi * 440 * frame / 48000))
+                  samples.extend(struct.pack("<hh", sample, sample))
+              audio.writeframes(samples)
+          PY
+
+      - name: play audio into the virtual microphone (linux)
+        if: runner.os == 'Linux'
+        run: |
+          nohup bash -c 'while paplay --device=voice_output "$RUNNER_TEMP/voice.wav"; do :; done' \
+            > "$RUNNER_TEMP/voice-playback.log" 2>&1 < /dev/null &
+
+      - name: play audio into the virtual microphone (macos)
+        id: playback_macos
+        if: runner.os == 'macOS'
+        run: |
+          nohup bash -c 'while afplay "$RUNNER_TEMP/voice.wav"; do :; done' \
+            > "$RUNNER_TEMP/voice-playback.log" 2>&1 < /dev/null &
+          echo "pid=$!" >> "$GITHUB_OUTPUT"
+
+      - name: run integration tests
+        timeout-minutes: 3
+        run: pnpm test:integration
+
+      - name: stop PulseAudio (linux)
+        if: runner.os == 'Linux' && always()
+        run: pulseaudio --kill
+
+      - name: stop audio playback (macos)
+        if: runner.os == 'macOS' && always() && steps.playback_macos.outcome == 'success'
+        env:
+          PLAYBACK_PID: ${{ steps.playback_macos.outputs.pid }}
+        run: kill "$PLAYBACK_PID"

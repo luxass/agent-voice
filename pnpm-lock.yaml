@@ -163,10 +163,6 @@ settings:
   excludeLinksFromLockfile: false
 
 catalogs:
-  default:
-    typebox:
-      specifier: 1.3.27
-      version: 1.3.27
   dev:
     '@types/node':
       specifier: 24.13.6
@@ -195,13 +191,29 @@ catalogs:
     vitest-testdirs:
       specifier: 4.5.1
       version: 4.5.1
+  runtime:
+    '@handy-computer/recorder':
+      specifier: 0.1.0
+      version: 0.1.0
+    transcribe-cpp:
+      specifier: 0.2.4
+      version: 0.2.4
+    typebox:
+      specifier: 1.3.27
+      version: 1.3.27
 
 importers:
 
   .:
     dependencies:
+      '@handy-computer/recorder':
+        specifier: catalog:runtime
+        version: 0.1.0
+      transcribe-cpp:
+        specifier: catalog:runtime
+        version: 0.2.4
       typebox:
-        specifier: 'catalog:'
+        specifier: catalog:runtime
         version: 1.3.27
     devDependencies:
       '@types/node':
@@ -390,6 +402,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@handy-computer/recorder@0.1.0':
+    resolution: {integrity: sha512-plURLAl6yY5BC76nw08PZgQuUnPG4ol0iwT2x2Oqcs1nkeZYwuFva9iKpRcP72ZytN613iXpeF3MatWIFZo6IA==}
+    engines: {node: '>=18'}
+
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
     engines: {node: '>=6.0.0'}
@@ -399,6 +415,106 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@koromix/koffi-android-arm64@3.3.2':
+    resolution: {integrity: sha512-6mFtwFJCy1skaf/qzl82OtELmT2BwHXbephfrIFqKoxIghc7N+kiW33J3ZNRP8JhBYFI6xJ8jiatGwPJ7mCOMw==}
+    cpu: [arm64]
+    os: [android]
+
+  '@koromix/koffi-android-x64@3.3.2':
+    resolution: {integrity: sha512-wzIWXvldodHWST6KZBdjJlpdH0DJ2rIN5YppY+/T+mTR1DcRYdYhOXzZMGDDx9W3ao8Hry8G4GqVzK9IuYpuWA==}
+    cpu: [x64]
+    os: [android]
+
+  '@koromix/koffi-darwin-arm64@3.3.2':
+    resolution: {integrity: sha512-gQKOkA/4tkOxXP3hdau2MrvVvTYlKQiXd86hK+B2FKErV0QcwqrWt6DWZ3FtJUYGB1scenT0srS9VfsWmbgeMQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@koromix/koffi-darwin-x64@3.3.2':
+    resolution: {integrity: sha512-qxysFokAwiMLiWYYVhooWZHSV3REKJErsUjnX9IeG2rAVpWNkdcXUiQ2GMdfH3hZ0f2fuv0fTuv293/tYu1yew==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@koromix/koffi-freebsd-arm64@3.3.2':
+    resolution: {integrity: sha512-EinnZVzK3KVTQe0N+XXnUfUN2fwNiYEY5IuAcMqtJO4rbOR+8S+C+bbViUKwqmkLG8OvL/kBesuwGLn5DLNZCQ==}
+    cpu: [arm64]
+    os: [freebsd]
+
+  '@koromix/koffi-freebsd-ia32@3.3.2':
+    resolution: {integrity: sha512-gnJFMVbxeyY4dSQbw0p3smSyFGDrp8QzI5krF73QxP7GSIMHR2lplejZseNQGyHIeR3XDdxuJFsfAfXmZdQM3w==}
+    cpu: [ia32]
+    os: [freebsd]
+
+  '@koromix/koffi-freebsd-x64@3.3.2':
+    resolution: {integrity: sha512-56mIFadXceWImQbsO0fN1hoZ76LCIvAjouL4fntoA7IKDI64BFbLSkcJ7Roww31YwxKjJaA9vdk93qt7bXXJZw==}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@koromix/koffi-linux-arm64@3.3.2':
+    resolution: {integrity: sha512-adabETUHezNDJ6jpqpJV01oJRW8rI4KWH3xV6EpFlIAXCtj6l4aLCbJ6DbGH8fNmsJBLnWiuLkyoNm8zkVotCw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@koromix/koffi-linux-arm@3.3.2':
+    resolution: {integrity: sha512-NhvFzykswakToxAWVhpHf5qA/y8z755MAz4MU1m89yIL1lqUuJDSk6Fy/moD3YIQPOjjuHVf09wO7mlO5ukCbw==}
+    cpu: [arm]
+    os: [linux]
+
+  '@koromix/koffi-linux-ia32@3.3.2':
+    resolution: {integrity: sha512-IMJAp4dg+l1N5Yek43NpDHDVaJFRkMaBnAg9uI3Z1vk61+WxxtaugOl0lC6gDPLBeNE+lzSXcAEeKBIkTwDzdw==}
+    cpu: [ia32]
+    os: [linux]
+
+  '@koromix/koffi-linux-loong64@3.3.2':
+    resolution: {integrity: sha512-Sdf+iQ5Fo3Px6e8xFx7eTES+cAIiHxCLt9KDVmnHm0ls6fW2eTVu5ez1+3GUBb/gjLTMODX2U4+dP9LHagwHHg==}
+    cpu: [loong64]
+    os: [linux]
+
+  '@koromix/koffi-linux-ppc64@3.3.2':
+    resolution: {integrity: sha512-FVHtjljl9vUvT6dSsAE1ObOqmPeJXzS8Ez7cidlsI/rJ5pa7h50KQutU/jPfTaK1cqChRjI66hwnJseLG8VPTA==}
+    cpu: [ppc64]
+    os: [linux]
+
+  '@koromix/koffi-linux-riscv64@3.3.2':
+    resolution: {integrity: sha512-4Q3haXJ3oP5AJ0vlyd9HZsI7gS+s+fycqz1CDDrT6JftlSruIUbfr8be1/jetUlmh7Pd8HtQBM6x2gpQBNTttQ==}
+    cpu: [riscv64]
+    os: [linux]
+
+  '@koromix/koffi-linux-x64@3.3.2':
+    resolution: {integrity: sha512-78qO1oqd9GYfzcKOxIaRiN0KgvzQzgbPfdClf0/jErlWYdxnr8gB4i9KOFvsYMdnc7kTIa/wnubl1lPCiQnqvA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@koromix/koffi-openbsd-arm64@3.3.2':
+    resolution: {integrity: sha512-rB6HZ/RnEAu7CZoD8IMXonCJSD6WJIX8QfZ11RCOy9MXxA8wQR5CRnP3ffy4/8IbABorRoERLLFTFk5wFFZqCw==}
+    cpu: [arm64]
+    os: [openbsd]
+
+  '@koromix/koffi-openbsd-ia32@3.3.2':
+    resolution: {integrity: sha512-XmzyeUEsCc8f6n26684mzn73I5VdDBxFydm8JxwYCmvrzfkSkDPU7eQyRoxHDRwgveIK/plmRiMUIj3/7J1flw==}
+    cpu: [ia32]
+    os: [openbsd]
+
+  '@koromix/koffi-openbsd-x64@3.3.2':
+    resolution: {integrity: sha512-Bt+beMlH6yK4X21+y7lgk+lthjBODfwJjREFITVQH68v8rHWZ5UxV7FBInHZ7ZT0o07G/fgIr2l1DG6SpaTbEA==}
+    cpu: [x64]
+    os: [openbsd]
+
+  '@koromix/koffi-win32-arm64@3.3.2':
+    resolution: {integrity: sha512-+fLooyTbldECuFH54h1ags7BAOB4fmqnshyVkXr+HbJBhgHdHoIbZ+CcaoH1ELVth7L7G+5XNwbXDH1TOyQMvA==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@koromix/koffi-win32-ia32@3.3.2':
+    resolution: {integrity: sha512-knegFlqbXsYfWcbIsAHMrKHqVbLctqzYD9xW3+GfO1Dyt+xe1xY8YDiadjRaWtKkLz5uF1aJD886EfBZUhECLA==}
+    cpu: [ia32]
+    os: [win32]
+
+  '@koromix/koffi-win32-x64@3.3.2':
+    resolution: {integrity: sha512-OWc6s6gziEabkQj+xc+ZNaf5g69hc/DQJLBcmbhxJAifAdXDgj9vB5d8hcjS2mTHjBeAIqQ4nkd9d/Jc7OUuHw==}
+    cpu: [x64]
+    os: [win32]
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -787,6 +903,33 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
+  '@transcribe-cpp/darwin-arm64-metal@0.2.4':
+    resolution: {integrity: sha512-7a1cZLpcHN5VFtTPCkFo01rdIruk7vG+dNjjP465bZhz+mZeQucf4p383zCyXgbsnZBkpORH/zevIDfiEFCSpw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@transcribe-cpp/darwin-x64-cpu@0.2.4':
+    resolution: {integrity: sha512-Qs5qhZ0MuGhpL3hZf2k/6cmKFeuefNQTPcuJgC/SgjwaK6QhnOk4wXfkIBAGGf3KiD4D0QohJAF2BbAqpzG26Q==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@transcribe-cpp/linux-arm64-cpu-vulkan@0.2.4':
+    resolution: {integrity: sha512-+YQB++d4S6U6dzCvrdUiDt3m+Pdx3yZtxLWXHXRpBKuRM/P0Vo/A7XuOuz7w81c/mWGnDMVYLgOf0tnFoXXbHA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@transcribe-cpp/linux-x64-cpu-vulkan@0.2.4':
+    resolution: {integrity: sha512-S3gNRtSXi7/Om/M+h08kn295EiOL9JZNiyguUPhDuBi3YTflAn/R5amfY4z0ozwEsw7SJVYAweYygFVDZoL3Xg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@transcribe-cpp/win32-x64-cpu-vulkan@0.2.4':
+    resolution: {integrity: sha512-qt/byhiR2FdVdrautXOalSXk9329+NQW0F+FivamcemPFZRkTWCkqQE3AiHszaFJE7SK4emZg5ic0qoKQvc6zQ==}
+    cpu: [x64]
+    os: [win32]
+
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
 
@@ -1144,6 +1287,9 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
+  koffi@3.3.2:
+    resolution: {integrity: sha512-f9Rrcmpy7lQs0ayJfhaxiG5OLp1aZjXKOFLXo7Gax6snJRKmdpYnYEOkpQ7ImCBrbvOdzFT06EP+FaLZv35W7Q==}
+
   lightningcss-android-arm64@1.33.0:
     resolution: {integrity: sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==}
     engines: {node: '>= 12.0.0'}
@@ -1360,6 +1506,10 @@ packages:
   tinypool@2.1.2:
     resolution: {integrity: sha512-9YodfrxS9g9IbFr/KOjE5bAeJ0p61n3bW6mqvy0jtoeKd1kTW1Cxm0oulm6KX2lyM9Gl6WIe8nEbY7LWv5ZJww==}
     engines: {node: ^20.0.0 || >=22.0.0}
+
+  transcribe-cpp@0.2.4:
+    resolution: {integrity: sha512-PS5dgcYEIWCVmJNgbFdafntyUX/1OxQPTscOrBcmXiIuvZY6skXwwG2KcDS2FVO48aavx5/9t8RkStespaDPxg==}
+    engines: {node: '>=22'}
 
   tree-kill@1.2.2:
     resolution: {integrity: sha512-L0Orpi8qGpRG//Nd+H90vFB+3iHnue1zSSGmNOOCh1GLJ7rUKVwV2HvijphGQS2UmhUZewS9VgvxYIdgr+fG1A==}
@@ -1609,6 +1759,8 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
+  '@handy-computer/recorder@0.1.0': {}
+
   '@jridgewell/resolve-uri@3.1.2': {}
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
@@ -1617,6 +1769,66 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
+
+  '@koromix/koffi-android-arm64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-android-x64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-darwin-arm64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-darwin-x64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-freebsd-arm64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-freebsd-ia32@3.3.2':
+    optional: true
+
+  '@koromix/koffi-freebsd-x64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-linux-arm64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-linux-arm@3.3.2':
+    optional: true
+
+  '@koromix/koffi-linux-ia32@3.3.2':
+    optional: true
+
+  '@koromix/koffi-linux-loong64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-linux-ppc64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-linux-riscv64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-linux-x64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-openbsd-arm64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-openbsd-ia32@3.3.2':
+    optional: true
+
+  '@koromix/koffi-openbsd-x64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-win32-arm64@3.3.2':
+    optional: true
+
+  '@koromix/koffi-win32-ia32@3.3.2':
+    optional: true
+
+  '@koromix/koffi-win32-x64@3.3.2':
+    optional: true
 
   '@opentelemetry/api@1.9.0':
     optional: true
@@ -1809,6 +2021,21 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
+
+  '@transcribe-cpp/darwin-arm64-metal@0.2.4':
+    optional: true
+
+  '@transcribe-cpp/darwin-x64-cpu@0.2.4':
+    optional: true
+
+  '@transcribe-cpp/linux-arm64-cpu-vulkan@0.2.4':
+    optional: true
+
+  '@transcribe-cpp/linux-x64-cpu-vulkan@0.2.4':
+    optional: true
+
+  '@transcribe-cpp/win32-x64-cpu-vulkan@0.2.4':
+    optional: true
 
   '@types/chai@5.2.3':
     dependencies:
@@ -2038,6 +2265,29 @@ snapshots:
   jiti@2.7.0:
     optional: true
 
+  koffi@3.3.2:
+    optionalDependencies:
+      '@koromix/koffi-android-arm64': 3.3.2
+      '@koromix/koffi-android-x64': 3.3.2
+      '@koromix/koffi-darwin-arm64': 3.3.2
+      '@koromix/koffi-darwin-x64': 3.3.2
+      '@koromix/koffi-freebsd-arm64': 3.3.2
+      '@koromix/koffi-freebsd-ia32': 3.3.2
+      '@koromix/koffi-freebsd-x64': 3.3.2
+      '@koromix/koffi-linux-arm': 3.3.2
+      '@koromix/koffi-linux-arm64': 3.3.2
+      '@koromix/koffi-linux-ia32': 3.3.2
+      '@koromix/koffi-linux-loong64': 3.3.2
+      '@koromix/koffi-linux-ppc64': 3.3.2
+      '@koromix/koffi-linux-riscv64': 3.3.2
+      '@koromix/koffi-linux-x64': 3.3.2
+      '@koromix/koffi-openbsd-arm64': 3.3.2
+      '@koromix/koffi-openbsd-ia32': 3.3.2
+      '@koromix/koffi-openbsd-x64': 3.3.2
+      '@koromix/koffi-win32-arm64': 3.3.2
+      '@koromix/koffi-win32-ia32': 3.3.2
+      '@koromix/koffi-win32-x64': 3.3.2
+
   lightningcss-android-arm64@1.33.0:
     optional: true
 
@@ -2241,6 +2491,16 @@ snapshots:
       picomatch: 4.0.7
 
   tinypool@2.1.2: {}
+
+  transcribe-cpp@0.2.4:
+    dependencies:
+      koffi: 3.3.2
+    optionalDependencies:
+      '@transcribe-cpp/darwin-arm64-metal': 0.2.4
+      '@transcribe-cpp/darwin-x64-cpu': 0.2.4
+      '@transcribe-cpp/linux-arm64-cpu-vulkan': 0.2.4
+      '@transcribe-cpp/linux-x64-cpu-vulkan': 0.2.4
+      '@transcribe-cpp/win32-x64-cpu-vulkan': 0.2.4
 
   tree-kill@1.2.2: {}
 

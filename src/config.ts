@@ -9,7 +9,6 @@ export const transcriptionProfileSchema = Type.Union([
   Type.Object({
     type: Type.Literal("local"),
     model: Type.Optional(Type.String({ minLength: 1 })),
-    binary: Type.Optional(Type.String({ minLength: 1 })),
     language: Type.Optional(Type.String({ minLength: 1 })),
   }),
   Type.Object({
@@ -34,7 +33,12 @@ export type VoiceSettingsResult =
   | { settings: VoiceSettings; errors: [] }
   | { settings: undefined; errors: VoiceSettingsError[] };
 
-/** Validate known settings without rejecting or removing extra keys. */
+/**
+ * Validate known settings and active-profile membership, preserving extra keys.
+ *
+ * @param {unknown} value - Unvalidated settings.
+ * @returns Valid settings or diagnostics with JSON-pointer paths.
+ */
 export function validateVoiceSettings(value: unknown): VoiceSettingsResult {
   if (!Value.Check(voiceSettingsSchema, value)) {
     return {
@@ -56,7 +60,12 @@ export function validateVoiceSettings(value: unknown): VoiceSettingsResult {
   return { settings: value, errors: [] };
 }
 
-/** A missing file has no settings and no errors. Read, JSON and validation failures are returned. */
+/**
+ * Read settings from disk, preserving extra keys.
+ *
+ * @param {string} path - Settings file chosen by the host.
+ * @returns Settings or diagnostics. Missing files have no settings and an empty error list.
+ */
 export function loadVoiceSettings(path: string): VoiceSettingsResult {
   if (!existsSync(path)) return { settings: undefined, errors: [] };
   try {
@@ -70,10 +79,24 @@ export function loadVoiceSettings(path: string): VoiceSettingsResult {
   }
 }
 
+/**
+ * Write settings as formatted JSON.
+ *
+ * @param {string} path - Destination settings file.
+ * @param {VoiceSettings} settings - Settings to save.
+ * @throws If the file cannot be written.
+ */
 export function saveVoiceSettings(path: string, settings: VoiceSettings): void {
   writeFileSync(path, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
+/**
+ * Select the active transcription profile.
+ *
+ * @param {VoiceSettings} [settings] - Omit to use the default local profile.
+ * @returns The profile name and transcription configuration.
+ * @throws If the active profile is absent from `profiles`.
+ */
 export function getActiveProfile(settings?: VoiceSettings): {
   name: string;
   transcription: TranscriptionProfile;

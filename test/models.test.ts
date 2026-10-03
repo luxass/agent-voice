@@ -9,36 +9,35 @@ import {
   discoverLocalModels,
   downloadModel,
   listLocalModels,
+  MODEL_CATALOG,
   modelDir,
   modelPath,
-  WHISPER_MODELS,
 } from "../src/models";
 
 describe("discoverLocalModels", () => {
-  it("finds ggml models sorted by name and skips other files", async () => {
+  it("finds GGUF models sorted by name and skips other files and directories", async () => {
     const dir = await testdir({
-      "ggml-small.bin": "",
+      "whisper-small.gguf": "",
       "notes.txt": "",
-      "ggml-base.bin": "",
-      "model.bin": "",
+      "parakeet.gguf": "",
+      "ggml-old.bin": "",
+      "directory.gguf": {},
     });
     expect(discoverLocalModels(dir)).toEqual([
-      join(dir, "ggml-base.bin"),
-      join(dir, "ggml-small.bin"),
+      join(dir, "parakeet.gguf"),
+      join(dir, "whisper-small.gguf"),
     ]);
   });
 
-  it("follows symlinked models but skips broken links", async () => {
+  it("follows symlinked GGUF models but skips broken links", async () => {
     const dir = await testdir({
-      store: { "ggml-real.bin": "" },
+      store: { "real.gguf": "" },
       models: {
-        "ggml-linked.bin": symlink("../store/ggml-real.bin"),
-        "ggml-broken.bin": symlink("../store/missing.bin"),
+        "linked.gguf": symlink("../store/real.gguf"),
+        "broken.gguf": symlink("../store/missing.gguf"),
       },
     });
-    expect(discoverLocalModels(join(dir, "models"))).toEqual([
-      join(dir, "models", "ggml-linked.bin"),
-    ]);
+    expect(discoverLocalModels(join(dir, "models"))).toEqual([join(dir, "models", "linked.gguf")]);
   });
 
   it("is empty for a missing directory", () => {
@@ -47,24 +46,28 @@ describe("discoverLocalModels", () => {
 });
 
 describe("discoverLocalModels defaults", () => {
-  it("looks only in ~/.cache/whisper", async () => {
+  it("looks only in ~/.cache/agent-voice", async () => {
     const dir = await testdir({
-      ".cache": { whisper: { "ggml-turbo.bin": "" } },
-      ".local": { share: { "whisper-cpp": { "ggml-base.bin": "" } } },
+      ".cache": {
+        "agent-voice": { "whisper-small.gguf": "" },
+        whisper: { "old.gguf": "" },
+      },
     });
     vi.stubEnv("HOME", dir);
     vi.stubEnv("AGENT_VOICE_MODEL_DIR", "");
-    expect(discoverLocalModels()).toEqual([join(dir, ".cache", "whisper", "ggml-turbo.bin")]);
+    expect(discoverLocalModels()).toEqual([
+      join(dir, ".cache", "agent-voice", "whisper-small.gguf"),
+    ]);
   });
 
   it("looks only in AGENT_VOICE_MODEL_DIR when set", async () => {
     const dir = await testdir({
-      custom: { "ggml-custom.bin": "" },
-      ".cache": { whisper: { "ggml-turbo.bin": "" } },
+      custom: { "custom.gguf": "" },
+      ".cache": { "agent-voice": { "whisper-small.gguf": "" } },
     });
     vi.stubEnv("HOME", dir);
     vi.stubEnv("AGENT_VOICE_MODEL_DIR", join(dir, "custom"));
-    expect(discoverLocalModels()).toEqual([join(dir, "custom", "ggml-custom.bin")]);
+    expect(discoverLocalModels()).toEqual([join(dir, "custom", "custom.gguf")]);
   });
 
   it("is empty when no model is installed", async () => {
@@ -75,17 +78,17 @@ describe("discoverLocalModels defaults", () => {
 });
 
 describe("listLocalModels", () => {
-  it("lists installed models first, then curated models that are not installed", async () => {
-    const dir = await testdir({ "ggml-base.en.bin": "", "ggml-custom.bin": "" });
+  it("lists installed GGUF models first, then curated downloads that are not installed", async () => {
+    const dir = await testdir({ "whisper-small.gguf": "", "custom.gguf": "" });
     const models = listLocalModels(dir);
     expect(models.slice(0, 2)).toEqual([
-      { name: "base.en", path: join(dir, "ggml-base.en.bin"), installed: true },
-      { name: "custom", path: join(dir, "ggml-custom.bin"), installed: true },
+      { name: "custom", path: join(dir, "custom.gguf"), installed: true },
+      { name: "whisper-small", path: join(dir, "whisper-small.gguf"), installed: true },
     ]);
     expect(models.slice(2)).toEqual(
-      WHISPER_MODELS.filter(({ name }) => name !== "base.en").map(({ name, approxMB }) => ({
+      MODEL_CATALOG.filter(({ name }) => name !== "whisper-small").map(({ name, approxMB }) => ({
         name,
-        path: join(dir, `ggml-${name}.bin`),
+        path: join(dir, `${name}.gguf`),
         installed: false,
         approxMB,
       })),
@@ -94,12 +97,14 @@ describe("listLocalModels", () => {
 });
 
 describe("modelDir", () => {
-  it("defaults to ~/.cache/whisper", async () => {
+  it("defaults to ~/.cache/agent-voice", async () => {
     const dir = await testdir({});
     vi.stubEnv("HOME", dir);
     vi.stubEnv("AGENT_VOICE_MODEL_DIR", "");
-    expect(modelDir()).toBe(join(dir, ".cache", "whisper"));
-    expect(modelPath("base.en")).toBe(join(dir, ".cache", "whisper", "ggml-base.en.bin"));
+    expect(modelDir()).toBe(join(dir, ".cache", "agent-voice"));
+    expect(modelPath("whisper-small")).toBe(
+      join(dir, ".cache", "agent-voice", "whisper-small.gguf"),
+    );
   });
 
   it("uses AGENT_VOICE_MODEL_DIR when set", () => {
@@ -108,7 +113,6 @@ describe("modelDir", () => {
   });
 });
 
-/** A streaming response of `chunks` with a matching Content-Length. */
 function respond(chunks: string[]) {
   const bytes = chunks.map((chunk) => new TextEncoder().encode(chunk));
   const length = bytes.reduce((sum, chunk) => sum + chunk.byteLength, 0);
@@ -126,40 +130,44 @@ describe("downloadModel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("downloads from Hugging Face into the model directory and reports progress", async () => {
+  it("downloads a pinned GGUF revision and reports progress", async () => {
     const dir = await testdir({});
     const fetch = vi.fn(() => Promise.resolve(respond(["mod", "el"])));
     vi.stubGlobal("fetch", fetch);
     const progress: [number, number | undefined][] = [];
-
-    const path = await downloadModel("base.en", {
+    const path = await downloadModel("whisper-small", {
       dir: join(dir, "models"),
       onProgress: (received, total) => {
         progress.push([received, total]);
       },
     });
-
-    expect(path).toBe(join(dir, "models", "ggml-base.en.bin"));
+    expect(path).toBe(join(dir, "models", "whisper-small.gguf"));
     expect(readFileSync(path, "utf8")).toBe("model");
     expect(fetch).toHaveBeenCalledWith(
-      "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
+      "https://huggingface.co/handy-computer/whisper-small-gguf/resolve/c0214bd34be9296695486f838e0142f900803159/whisper-small-Q8_0.gguf",
       expect.anything(),
     );
-    // Node may coalesce chunks, so only the final count is fixed.
     expect(progress.at(-1)).toEqual([5, 5]);
-    expect(readdirSync(join(dir, "models"))).toEqual(["ggml-base.en.bin"]);
+    expect(readdirSync(join(dir, "models"))).toEqual(["whisper-small.gguf"]);
   });
 
   it("is discoverable once downloaded to the default directory", async () => {
-    const dir = await testdir({});
-    vi.stubEnv("HOME", dir);
+    vi.stubEnv("HOME", await testdir({}));
+    vi.stubEnv("AGENT_VOICE_MODEL_DIR", "");
     vi.stubGlobal("fetch", () => Promise.resolve(respond(["model"])));
-    const path = await downloadModel("tiny.en");
+    const path = await downloadModel("whisper-small");
     expect(discoverLocalModels()).toEqual([path]);
   });
 
-  it("rejects names that could escape the directory", async () => {
-    await expect(downloadModel("../evil")).rejects.toThrow("Invalid Whisper model name");
+  it("rejects unknown names before fetching or writing files", async () => {
+    const dir = await testdir({});
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    vi.stubGlobal("fetch", fetch);
+    await expect(downloadModel("../evil", { dir })).rejects.toThrow(
+      "Unknown downloadable model: ../evil",
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   it("fails on HTTP errors without writing a file and releases the body", async () => {
@@ -167,8 +175,8 @@ describe("downloadModel", () => {
     const cancel = vi.fn();
     const body = new ReadableStream<Uint8Array>({ cancel });
     vi.stubGlobal("fetch", () => Promise.resolve(new Response(body, { status: 404 })));
-    await expect(downloadModel("missing", { dir })).rejects.toThrow(
-      "Downloading missing failed: HTTP 404",
+    await expect(downloadModel("whisper-small", { dir })).rejects.toThrow(
+      "Downloading whisper-small failed: HTTP 404",
     );
     expect(cancel).toHaveBeenCalled();
     expect(readdirSync(dir)).toEqual([]);
@@ -178,12 +186,12 @@ describe("downloadModel", () => {
     const dir = await testdir({});
     vi.stubGlobal("fetch", () => Promise.resolve(respond(["mod", "el"])));
     const paths = await Promise.all([
-      downloadModel("base", { dir }),
-      downloadModel("base", { dir }),
+      downloadModel("whisper-small", { dir }),
+      downloadModel("whisper-small", { dir }),
     ]);
-    expect(paths).toEqual([join(dir, "ggml-base.bin"), join(dir, "ggml-base.bin")]);
-    expect(readFileSync(join(dir, "ggml-base.bin"), "utf8")).toBe("model");
-    expect(readdirSync(dir)).toEqual(["ggml-base.bin"]);
+    expect(paths).toEqual([join(dir, "whisper-small.gguf"), join(dir, "whisper-small.gguf")]);
+    expect(readFileSync(join(dir, "whisper-small.gguf"), "utf8")).toBe("model");
+    expect(readdirSync(dir)).toEqual(["whisper-small.gguf"]);
   });
 
   it("removes the partial file when the connection fails mid-download", async () => {
@@ -195,7 +203,7 @@ describe("downloadModel", () => {
       },
     });
     vi.stubGlobal("fetch", () => Promise.resolve(new Response(body)));
-    await expect(downloadModel("base", { dir })).rejects.toThrow("socket closed");
+    await expect(downloadModel("whisper-small", { dir })).rejects.toThrow("socket closed");
     expect(readdirSync(dir)).toEqual([]);
   });
 
@@ -205,21 +213,18 @@ describe("downloadModel", () => {
     const body = new ReadableStream<Uint8Array>({
       start(stream) {
         stream.enqueue(new TextEncoder().encode("mod"));
-        // Never closes: the download only ends by aborting.
       },
     });
     vi.stubGlobal("fetch", () =>
       Promise.resolve(new Response(body, { headers: { "content-length": "5" } })),
     );
-
-    const download = downloadModel("base", {
+    const download = downloadModel("whisper-small", {
       dir,
       signal: controller.signal,
       onProgress: () => {
         controller.abort();
       },
     });
-
     await expect(download).rejects.toThrow(/abort/iu);
     expect(readdirSync(dir)).toEqual([]);
   });

@@ -1,38 +1,12 @@
-import { accessSync, constants, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
-
-/** Settings keep `~/` paths as written; expand them only when a path is accessed. */
-export function expandHome(path: string): string {
-  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
-}
-
-function isExecutable(path: string): boolean {
-  try {
-    // X_OK also passes searchable directories; `statSync` follows symlinks to executables.
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
+import { join } from "node:path";
 
 /**
- * Resolve `command` the way `spawn` would: a path (or `~/` path) is checked directly,
- * a bare name is searched on `PATH`. Returns undefined when nothing executable is found.
+ * Expand a leading `~/` to the user's home directory.
+ *
+ * @param {string} path - Path to access.
+ * @returns The expanded path, or the original path when it has no `~/` prefix.
  */
-export function findExecutable(command: string): string | undefined {
-  const expanded = expandHome(command);
-  if (expanded.includes("/") || expanded.includes("\\"))
-    return isExecutable(expanded) ? expanded : undefined;
-  const extensions =
-    process.platform === "win32" ? ["", ...(process.env.PATHEXT ?? ".EXE;.CMD").split(";")] : [""];
-  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
-    if (directory === "") continue;
-    for (const extension of extensions) {
-      const candidate = join(directory, command + extension);
-      if (isExecutable(candidate)) return candidate;
-    }
-  }
-  return undefined;
+export function expandHome(path: string): string {
+  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
