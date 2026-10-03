@@ -1,5 +1,17 @@
-export { getActiveProfile, loadVoiceSettings, saveVoiceSettings } from "./config";
-export type { TranscriptionProfile, VoiceSettings } from "./config";
+export {
+  getActiveProfile,
+  loadVoiceSettings,
+  saveVoiceSettings,
+  transcriptionProfileSchema,
+  validateVoiceSettings,
+  voiceSettingsSchema,
+} from "./config";
+export type {
+  TranscriptionProfile,
+  VoiceSettings,
+  VoiceSettingsError,
+  VoiceSettingsResult,
+} from "./config";
 export { listInputDevices } from "./devices";
 export type { InputDevice } from "./devices";
 export { runDoctor } from "./doctor";

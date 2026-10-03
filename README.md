@@ -24,7 +24,11 @@ import {
 } from "@luxass/agent-voice";
 
 // The host chooses where its settings file lives.
-const settings = loadVoiceSettings(settingsPath);
+const { settings, errors } = loadVoiceSettings(settingsPath);
+if (!settings) {
+  showSetup(errors);
+  return;
+}
 const recorder = createRecorder();
 
 // Recording uses the saved device directly, or the system default.
@@ -44,11 +48,11 @@ settings.inputDevice = (await listInputDevices())[0];
 saveVoiceSettings(settingsPath, settings);
 ```
 
-`loadVoiceSettings` validates once, without expanding paths or writing defaults. A missing file means no settings. Save the same object after edits. Unknown keys are rejected.
+`loadVoiceSettings` returns `{ settings, errors }`. A missing file returns `settings: undefined` with an empty error list. Invalid settings, malformed JSON, and read failures return no settings and errors containing a JSON-pointer `path` and `message`. Known fields are validated with TypeBox; extra keys are allowed and preserved. Loading never modifies the file. Hosts decide how to display errors and offer setup. `validateVoiceSettings` provides the same result for values already in memory.
 
 ## ⚙️ Settings
 
-Omitting everything uses the system-default microphone and an auto-discovered local Whisper model. For multiple transcription configurations, name profiles and choose one explicitly:
+Saved settings require `activeProfile` and `profiles`. Omitting `inputDevice` uses the system-default microphone. A local profile without a model path uses an auto-discovered Whisper model. Name profiles and choose one explicitly:
 
 ```json
 {

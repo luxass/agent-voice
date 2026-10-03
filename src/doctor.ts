@@ -85,13 +85,13 @@ function checkProfile(name: string, profile: TranscriptionProfile): DoctorCheck[
  * calling any API. Only checks that apply to the settings are returned.
  */
 export async function runDoctor(
-  settings: VoiceSettings,
+  settings?: VoiceSettings,
   { listDevices = listInputDevices }: DoctorOptions = {},
 ): Promise<DoctorCheck[]> {
   const { name, transcription } = getActiveProfile(settings);
   return [
     checkExecutable("sox", "sox"),
-    ...(settings.inputDevice ? [await checkDevice(settings.inputDevice, listDevices)] : []),
+    ...(settings?.inputDevice ? [await checkDevice(settings.inputDevice, listDevices)] : []),
     ...checkProfile(name, transcription),
   ];
 }

@@ -37,7 +37,7 @@ describe("runDoctor", () => {
     const dir = await environment(["sox", "whisper-cli"], {
       ".cache": { whisper: { "ggml-base.en.bin": "" } },
     });
-    expect(await runDoctor({})).toEqual([
+    expect(await runDoctor()).toEqual([
       { id: "sox", ok: true, detail: join(dir, "bin", "sox") },
       { id: "whisper-cli", ok: true, detail: join(dir, "bin", "whisper-cli") },
       {
@@ -51,7 +51,7 @@ describe("runDoctor", () => {
   it("reports missing tools and models with fixes for the platform", async () => {
     await environment([]);
     onPlatform("darwin");
-    expect(await runDoctor({})).toEqual([
+    expect(await runDoctor()).toEqual([
       { id: "sox", ok: false, detail: "sox not found", fix: "brew install sox" },
       {
         id: "whisper-cli",
@@ -71,7 +71,7 @@ describe("runDoctor", () => {
   it("falls back to generic install fixes on other platforms", async () => {
     await environment([]);
     onPlatform("linux");
-    const [sox, whisper] = await runDoctor({});
+    const [sox, whisper] = await runDoctor();
     expect(sox?.fix).toBe("install the sox package, e.g. `sudo apt install sox`");
     expect(whisper?.fix).toBe("build whisper.cpp: https://github.com/ggml-org/whisper.cpp");
   });
@@ -82,7 +82,7 @@ describe("runDoctor", () => {
       bin: { "whisper-cli": executable },
     });
     vi.stubEnv("PATH", `${join(dir, "shadow")}:${join(dir, "bin")}`);
-    expect(await runDoctor({})).toContainEqual({
+    expect(await runDoctor()).toContainEqual({
       id: "whisper-cli",
       ok: true,
       detail: join(dir, "bin", "whisper-cli"),

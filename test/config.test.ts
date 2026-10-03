@@ -33,46 +33,57 @@ async function settingsFile(settings: unknown): Promise<string> {
 
 describe("loadVoiceSettings", () => {
   it("treats a missing file as no settings", async () => {
-    expect(loadVoiceSettings(join(await testdir({}), "voice.json"))).toEqual({});
+    expect(loadVoiceSettings(join(await testdir({}), "voice.json"))).toEqual({
+      settings: undefined,
+      errors: [],
+    });
   });
 
   it("returns settings exactly as written, without defaults or path expansion", async () => {
-    expect(loadVoiceSettings(await settingsFile(SETTINGS))).toEqual(SETTINGS);
+    expect(loadVoiceSettings(await settingsFile(SETTINGS))).toEqual({
+      settings: SETTINGS,
+      errors: [],
+    });
   });
 
   it.each([
-    ["an unknown key", { input: "Mic" }, "at /input: unknown setting"],
+    ["an unknown key", { ...SETTINGS, input: "Mic" }, undefined],
     [
-      "an old-style api profile",
+      "an api profile without a model",
       {
         activeProfile: "r",
         profiles: { r: { type: "api", endpoint: "https://x", models: ["a"] } },
       },
-      "at /profiles/r: must have required properties model",
+      "/profiles/r",
     ],
     [
-      "a misspelled local profile key",
+      "an extra local profile key",
       { activeProfile: "l", profiles: { l: { type: "local", modle: "x" } } },
-      "at /profiles/l/modle: unknown setting",
+      undefined,
     ],
     [
       "an unknown profile type",
       { activeProfile: "r", profiles: { r: { type: "remote" } } },
-      "at /profiles/r/type: must be equal to constant",
+      "/profiles/r",
     ],
     [
       "an empty api endpoint",
       { activeProfile: "r", profiles: { r: { type: "api", endpoint: "", model: "m" } } },
-      "at /profiles/r/endpoint: must not have fewer than 1 characters",
+      "/profiles/r",
     ],
     [
       "an unsupported device format",
-      { inputDevice: { id: "jack:x", name: "x", format: "jack", source: "x" } },
-      "at /inputDevice/format: must be equal to constant",
+      { ...SETTINGS, inputDevice: { id: "jack:x", name: "x", format: "jack", source: "x" } },
+      "/inputDevice/format",
     ],
-  ])("rejects %s and names the field", async (_case, settings, message) => {
-    const path = await settingsFile(settings);
-    expect(() => loadVoiceSettings(path)).toThrow(`Invalid voice settings ${message}`);
+  ])("returns validation results for %s", async (_case, settings, errorPath) => {
+    const result = loadVoiceSettings(await settingsFile(settings));
+    if (errorPath === undefined) {
+      expect(result).toEqual({ settings, errors: [] });
+    } else {
+      expect(result.settings).toBeUndefined();
+      expect(result.errors.map(({ path }) => path)).toContain(errorPath);
+    }
   });
 
   it.each([
@@ -85,14 +96,18 @@ describe("loadVoiceSettings", () => {
       "an inherited property name",
       { activeProfile: "constructor", profiles: { l: { type: "local" } } },
     ],
-  ])("rejects %s when profiles exist", async (_case, settings) => {
-    const path = await settingsFile(settings);
-    expect(() => loadVoiceSettings(path)).toThrow("activeProfile must name a profile");
+  ])("returns errors for %s", async (_case, settings) => {
+    const result = loadVoiceSettings(await settingsFile(settings));
+    expect(result.settings).toBeUndefined();
+    expect(result.errors.length).toBeGreaterThan(0);
   });
 
-  it("rejects malformed JSON", async () => {
+  it("returns a parse error for malformed JSON", async () => {
     const dir = await testdir({ "voice.json": "{ nope" });
-    expect(() => loadVoiceSettings(join(dir, "voice.json"))).toThrow(SyntaxError);
+    const result = loadVoiceSettings(join(dir, "voice.json"));
+    expect(result.settings).toBeUndefined();
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.path).toBe("/");
   });
 });
 
@@ -101,13 +116,13 @@ describe("saveVoiceSettings", () => {
     const path = join(await testdir({}), "voice.json");
     saveVoiceSettings(path, SETTINGS);
     expect(readFileSync(path, "utf8")).toBe(`${JSON.stringify(SETTINGS, null, 2)}\n`);
-    expect(loadVoiceSettings(path)).toEqual(SETTINGS);
+    expect(loadVoiceSettings(path)).toEqual({ settings: SETTINGS, errors: [] });
   });
 });
 
 describe("getActiveProfile", () => {
   it("uses local transcription with an auto-detected model without profiles", () => {
-    expect(getActiveProfile({})).toEqual({ name: "local", transcription: { type: "local" } });
+    expect(getActiveProfile()).toEqual({ name: "local", transcription: { type: "local" } });
   });
 
   it("returns the active profile itself, so edits to it are saved", () => {
