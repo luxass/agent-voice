@@ -80,11 +80,14 @@ export async function createRecorder(): Promise<Recorder> {
       void session
         .then((device) => device.close())
         .then(
-          () => options.onError(error instanceof Error ? error : new Error(String(error))),
-          (closeError: unknown) =>
+          () => {
+            options.onError(error instanceof Error ? error : new Error(String(error)));
+          },
+          (closeError: unknown) => {
             options.onError(
               closeError instanceof Error ? closeError : new Error(String(closeError)),
-            ),
+            );
+          },
         );
     }
 

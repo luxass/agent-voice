@@ -20,8 +20,7 @@ export type DoctorOptions = {
 };
 
 async function checkInference(): Promise<DoctorCheck> {
-  // oxlint-disable-next-line typescript/strict-boolean-expressions
-  if (process.versions.bun)
+  if (process.versions.bun != null)
     return {
       id: "inference",
       ok: false,

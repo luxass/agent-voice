@@ -32,14 +32,15 @@ const native = vi.hoisted(() => {
       this.isRecording = true;
     });
 
-    stop = vi.fn<() => Promise<Recording>>(async () => {
+    stop = vi.fn<() => Promise<Recording>>(() => {
       this.isRecording = false;
-      return this.recording();
+      return Promise.resolve(this.recording());
     });
 
-    close = vi.fn(async () => {
+    close = vi.fn<() => Promise<void>>(() => {
       this.isRecording = false;
       this.isClosed = true;
+      return Promise.resolve();
     });
 
     recording(): Recording {
@@ -124,7 +125,7 @@ describe("createRecorder", () => {
 
   it("passes the saved native device ID and speech preset to open", async () => {
     const recorder = await fixture();
-    await recorder.start({ input: MIC, onError: vi.fn() });
+    await recorder.start({ input: MIC, onError: vi.fn<(error: Error) => void>() });
     expect(native.open).toHaveBeenCalledWith(
       expect.objectContaining({
         device: "mic-id",
@@ -134,13 +135,13 @@ describe("createRecorder", () => {
       }),
     );
     await recorder.cancel();
-    await recorder.start({ input: MIC, onError: vi.fn() });
+    await recorder.start({ input: MIC, onError: vi.fn<(error: Error) => void>() });
     expect(native.open).toHaveBeenLastCalledWith(expect.objectContaining({ device: "mic-id" }));
   });
 
   it("uses the system default input when no device is selected", async () => {
     const recorder = await fixture();
-    await recorder.start({ onError: vi.fn() });
+    await recorder.start({ onError: vi.fn<(error: Error) => void>() });
     expect(native.open).toHaveBeenCalledWith(expect.objectContaining({ device: undefined }));
   });
 
@@ -148,8 +149,10 @@ describe("createRecorder", () => {
     const recorder = await fixture();
     const opening = Promise.withResolvers<InstanceType<typeof native.FakeRecorder>>();
     native.open.mockImplementationOnce(() => opening.promise);
-    const started = recorder.start({ onError: vi.fn() });
-    await expect(recorder.start({ onError: vi.fn() })).rejects.toThrow("Already recording");
+    const started = recorder.start({ onError: vi.fn<(error: Error) => void>() });
+    await expect(recorder.start({ onError: vi.fn<(error: Error) => void>() })).rejects.toThrow(
+      "Already recording",
+    );
     const device = new native.FakeRecorder({});
     opening.resolve(device);
     await started;
@@ -170,10 +173,14 @@ describe("createRecorder", () => {
     device.close.mockImplementationOnce(() => closed.promise);
     const error = new native.RecorderError("DeviceLost", "Microphone disconnected");
     device.fail(error);
-    await vi.waitFor(() => expect(device.close).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(device.close).toHaveBeenCalledOnce();
+    });
     expect(onError).not.toHaveBeenCalled();
     closed.resolve();
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(onError).toHaveBeenCalledOnce();
+    });
     expect(onError).toHaveBeenCalledWith(error);
     expect(recorder.isRecording).toBe(false);
   });
@@ -193,12 +200,14 @@ describe("createRecorder", () => {
   it("delivers the final chunk before resolving stop and closing the device", async () => {
     const recorder = await fixture();
     const onFrame = vi.fn<(frame: Float32Array) => void>();
-    await recorder.start({ onError: vi.fn(), onFrame });
+    await recorder.start({ onError: vi.fn<(error: Error) => void>(), onFrame });
     const device = capturedDevice();
     const stopping = Promise.withResolvers<Recording>();
     device.stop.mockImplementationOnce(() => stopping.promise);
     const stopped = recorder.stop();
-    await vi.waitFor(() => expect(device.stop).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(device.stop).toHaveBeenCalledOnce();
+    });
     expect(device.close).not.toHaveBeenCalled();
     const tail = new Float32Array([0.25]);
     device.emit(tail);
@@ -211,7 +220,7 @@ describe("createRecorder", () => {
   it("cancel closes and discards audio without calling stop, and is safe when idle", async () => {
     const recorder = await fixture();
     await recorder.cancel();
-    await recorder.start({ onError: vi.fn() });
+    await recorder.start({ onError: vi.fn<(error: Error) => void>() });
     const device = capturedDevice();
     device.emit(new Float32Array([0.5]));
     await recorder.cancel();
@@ -220,7 +229,7 @@ describe("createRecorder", () => {
     expect(recorder.isRecording).toBe(false);
     await recorder.cancel();
 
-    await recorder.start({ onError: vi.fn() });
+    await recorder.start({ onError: vi.fn<(error: Error) => void>() });
     await expect(recorder.stop()).resolves.toEqual({
       sampleRate: AUDIO_SAMPLE_RATE,
       pcm: new Float32Array(),
@@ -231,7 +240,7 @@ describe("createRecorder", () => {
     const recorder = await fixture();
     const opening = Promise.withResolvers<InstanceType<typeof native.FakeRecorder>>();
     native.open.mockImplementationOnce(() => opening.promise);
-    const started = recorder.start({ onError: vi.fn() });
+    const started = recorder.start({ onError: vi.fn<(error: Error) => void>() });
     const cancelled = recorder.cancel();
     const device = new native.FakeRecorder({});
     opening.resolve(device);
@@ -247,7 +256,9 @@ describe("createRecorder", () => {
       "Selected microphone is unavailable",
     );
     native.open.mockRejectedValueOnce(error);
-    await expect(recorder.start({ input: MIC, onError: vi.fn() })).rejects.toBe(error);
+    await expect(
+      recorder.start({ input: MIC, onError: vi.fn<(error: Error) => void>() }),
+    ).rejects.toBe(error);
     expect(native.open).toHaveBeenCalledOnce();
     expect(native.open).toHaveBeenCalledWith(expect.objectContaining({ device: "mic-id" }));
     expect(recorder.isRecording).toBe(false);
@@ -265,7 +276,9 @@ describe("createRecorder", () => {
     const device = capturedDevice();
     device.emit(new Float32Array([0.1]));
     device.emit(new Float32Array([0.2]));
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(onError).toHaveBeenCalledOnce();
+    });
     expect(onError.mock.calls[0]?.[0].message).toBe("Frame consumer failed");
     expect(device.close).toHaveBeenCalledOnce();
     expect(recorder.isRecording).toBe(false);
@@ -273,7 +286,7 @@ describe("createRecorder", () => {
 
   it("rejects incomplete audio when frames were dropped", async () => {
     const recorder = await fixture();
-    await recorder.start({ onError: vi.fn() });
+    await recorder.start({ onError: vi.fn<(error: Error) => void>() });
     const device = capturedDevice();
     device.stop.mockResolvedValueOnce({
       ...device.recording(),
@@ -286,7 +299,7 @@ describe("createRecorder", () => {
 
   it("preserves the native failure when stop returns incomplete capture", async () => {
     const recorder = await fixture();
-    await recorder.start({ onError: vi.fn() });
+    await recorder.start({ onError: vi.fn<(error: Error) => void>() });
     const device = capturedDevice();
     const error = new native.RecorderError("Stalled", "Microphone stalled");
     device.stop.mockResolvedValueOnce({
