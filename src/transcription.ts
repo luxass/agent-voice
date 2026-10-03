@@ -28,9 +28,9 @@ export type TranscriptionStream = {
    */
   finalize: () => Promise<string>;
   /**
-   * Discard the stream and release its session. Safe during an in-flight feed.
+   * Discard the stream and await any in-flight work before releasing its session.
    */
-  cancel: () => void;
+  cancel: () => Promise<void>;
 };
 
 export type Transcriber = {
@@ -52,7 +52,7 @@ export type Transcriber = {
    */
   startStream: () => Promise<TranscriptionStream | undefined>;
   /**
-   * Dispose on profile changes or host shutdown. Releases local models and their sessions.
+   * Dispose on profile changes or host shutdown. Await active stream cleanup first.
    */
   dispose: () => void;
 };
@@ -133,6 +133,7 @@ export async function createTranscriber(profile: TranscriptionProfile): Promise<
         if (audio.pcm.length === 0) throw new Error("Recording is empty");
         return postAudio(audio, selected, options);
       },
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- The result is undefined, not void.
       startStream: () => Promise.resolve(undefined),
       dispose() {
         // API profiles have no persistent native resources.
@@ -141,7 +142,7 @@ export async function createTranscriber(profile: TranscriptionProfile): Promise<
   }
 
   // transcribe-cpp 0.2.4 documents a Bun N-API finalizer crash. Do not load it there.
-  if (process.versions.bun)
+  if (process.versions.bun != null)
     throw new Error(
       "Local transcription with transcribe-cpp 0.2.4 is not supported in Bun; use an API profile",
     );
@@ -167,28 +168,68 @@ export async function createTranscriber(profile: TranscriptionProfile): Promise<
       const session = model.createSession();
       try {
         const stream = await session.stream(options);
-        let pending = Promise.resolve<TranscriptText>(stream.text);
-        return {
-          feed(frame: Float32Array) {
-            pending = pending.then(async () => {
-              await stream.feed(frame);
-              return stream.text;
-            });
-            return pending;
-          },
-          async finalize() {
-            try {
-              await pending;
-              await stream.finalize();
-              return finishTranscript(stream.snapshot.text);
-            } finally {
+        let state: "open" | "finishing" | "closed" = "open";
+        let pending: Promise<unknown> = Promise.resolve();
+        let disposal: Promise<void> | undefined;
+
+        const checkActive = (): void => {
+          if (state === "closed") throw new Error("Transcription stream is closed");
+        };
+
+        const release = (): Promise<void> => {
+          disposal ??= pending.then(
+            () => {
               stream.reset();
               session.dispose();
-            }
+            },
+            () => {
+              stream.reset();
+              session.dispose();
+            },
+          );
+          return disposal;
+        };
+
+        return {
+          feed(frame: Float32Array) {
+            if (state !== "open")
+              return Promise.reject(new Error(`Transcription stream is ${state}`));
+            const fed = pending.then(async () => {
+              checkActive();
+              await stream.feed(frame);
+              checkActive();
+              return stream.text;
+            });
+            pending = fed;
+            return fed;
+          },
+          finalize() {
+            if (state !== "open")
+              return Promise.reject(new Error(`Transcription stream is ${state}`));
+            state = "finishing";
+            const finalized = pending.then(async () => {
+              checkActive();
+              await stream.finalize();
+              checkActive();
+              return finishTranscript(stream.snapshot.text);
+            });
+            pending = finalized;
+            return finalized.then(
+              async (text) => {
+                state = "closed";
+                await release();
+                return text;
+              },
+              async (error: unknown) => {
+                state = "closed";
+                await release();
+                throw error;
+              },
+            );
           },
           cancel() {
-            stream.reset();
-            session.dispose();
+            state = "closed";
+            return release();
           },
         };
       } catch (error) {

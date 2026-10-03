@@ -60,8 +60,8 @@ beforeEach(() => {
   native.model.dispose.mockReset();
   native.session.stream.mockReset().mockResolvedValue(native.stream);
   native.session.dispose.mockReset();
-  native.stream.feed.mockReset().mockResolvedValue(undefined);
-  native.stream.finalize.mockReset().mockResolvedValue(undefined);
+  native.stream.feed.mockReset().mockResolvedValue();
+  native.stream.finalize.mockReset().mockResolvedValue();
   native.stream.reset.mockReset();
   native.stream.text = { full: "partial", committed: "part", tentative: "ial" };
   native.stream.snapshot = { text: "  final words  " };
@@ -85,7 +85,9 @@ const local = (model: string, language?: string): TranscriptionProfile => ({
 async function reusable(language?: string) {
   const { model } = await fixture();
   const transcriber = await createTranscriber(local(model, language));
-  onTestFinished(() => transcriber.dispose());
+  onTestFinished(() => {
+    transcriber.dispose();
+  });
   return transcriber;
 }
 
@@ -241,7 +243,9 @@ describe("streaming transcription", () => {
     const first = stream.feed(firstFrame);
     const second = stream.feed(secondFrame);
     const finalized = stream.finalize();
-    await vi.waitFor(() => expect(native.stream.feed).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => {
+      expect(native.stream.feed).toHaveBeenCalledTimes(1);
+    });
     expect(native.stream.finalize).not.toHaveBeenCalled();
     gate.resolve();
     await expect(first).resolves.toEqual(native.stream.text);
@@ -260,10 +264,97 @@ describe("streaming transcription", () => {
     const transcriber = await reusable();
     const stream = await transcriber.startStream();
     if (!stream) throw new Error("The streaming fixture did not create a stream");
-    stream.cancel();
+    await stream.cancel();
     expect(native.stream.reset).toHaveBeenCalledOnce();
     expect(native.session.dispose).toHaveBeenCalledOnce();
     expect(native.model.dispose).not.toHaveBeenCalled();
+  });
+
+  it("cancels queued frames before native feeding starts", async () => {
+    native.model.capabilities.supportsStreaming = true;
+    const transcriber = await reusable();
+    const stream = await transcriber.startStream();
+    if (!stream) throw new Error("The streaming fixture did not create a stream");
+    const fed = stream.feed(AUDIO.pcm);
+    const rejected = expect(fed).rejects.toThrow("Transcription stream is closed");
+    await stream.cancel();
+    await rejected;
+    await stream.cancel();
+
+    expect(native.stream.feed).not.toHaveBeenCalled();
+    expect(native.stream.reset).toHaveBeenCalledOnce();
+    expect(native.session.dispose).toHaveBeenCalledOnce();
+    await expect(stream.feed(AUDIO.pcm)).rejects.toThrow("Transcription stream is closed");
+    await expect(stream.finalize()).rejects.toThrow("Transcription stream is closed");
+  });
+
+  it("waits for an in-flight feed and cancels queued frames and finalization", async () => {
+    native.model.capabilities.supportsStreaming = true;
+    const transcriber = await reusable();
+    const stream = await transcriber.startStream();
+    if (!stream) throw new Error("The streaming fixture did not create a stream");
+    const gate = Promise.withResolvers<void>();
+    native.stream.feed.mockImplementationOnce(() => gate.promise);
+    const first = stream.feed(AUDIO.pcm);
+    const second = stream.feed(AUDIO.pcm);
+    const finalized = stream.finalize();
+    const rejected = [
+      expect(first).rejects.toThrow("Transcription stream is closed"),
+      expect(second).rejects.toThrow("Transcription stream is closed"),
+      expect(finalized).rejects.toThrow("Transcription stream is closed"),
+    ];
+    await vi.waitFor(() => {
+      expect(native.stream.feed).toHaveBeenCalledOnce();
+    });
+    const cancelled = stream.cancel();
+    expect(native.stream.reset).not.toHaveBeenCalled();
+    expect(native.session.dispose).not.toHaveBeenCalled();
+    gate.resolve();
+    await Promise.all([...rejected, cancelled]);
+
+    expect(native.stream.feed).toHaveBeenCalledOnce();
+    expect(native.stream.finalize).not.toHaveBeenCalled();
+    expect(native.stream.reset).toHaveBeenCalledOnce();
+    expect(native.session.dispose).toHaveBeenCalledOnce();
+    expect(native.model.dispose).not.toHaveBeenCalled();
+  });
+
+  it("waits for native finalization when cancellation races with it", async () => {
+    native.model.capabilities.supportsStreaming = true;
+    const transcriber = await reusable();
+    const stream = await transcriber.startStream();
+    if (!stream) throw new Error("The streaming fixture did not create a stream");
+    const gate = Promise.withResolvers<void>();
+    native.stream.finalize.mockImplementationOnce(() => gate.promise);
+    const finalized = stream.finalize();
+    const rejected = expect(finalized).rejects.toThrow("Transcription stream is closed");
+    await vi.waitFor(() => {
+      expect(native.stream.finalize).toHaveBeenCalledOnce();
+    });
+    const cancelled = stream.cancel();
+    expect(native.session.dispose).not.toHaveBeenCalled();
+    gate.resolve();
+    await Promise.all([rejected, cancelled]);
+    await stream.cancel();
+
+    expect(native.stream.reset).toHaveBeenCalledOnce();
+    expect(native.session.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("rejects new work once finalization begins", async () => {
+    native.model.capabilities.supportsStreaming = true;
+    const transcriber = await reusable();
+    const stream = await transcriber.startStream();
+    if (!stream) throw new Error("The streaming fixture did not create a stream");
+    const finalized = stream.finalize();
+    await expect(stream.feed(AUDIO.pcm)).rejects.toThrow("Transcription stream is finishing");
+    await expect(finalized).resolves.toBe("final words");
+    await expect(stream.finalize()).rejects.toThrow("Transcription stream is closed");
+
+    expect(native.stream.feed).not.toHaveBeenCalled();
+    expect(native.stream.finalize).toHaveBeenCalledOnce();
+    expect(native.stream.reset).toHaveBeenCalledOnce();
+    expect(native.session.dispose).toHaveBeenCalledOnce();
   });
 
   it("releases the session if starting a native stream fails", async () => {

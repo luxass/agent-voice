@@ -20,6 +20,7 @@ Breaking changes for the next pre-1.0 minor release:
 - Local profiles no longer use `binary`. They require a compatible GGUF model; old Whisper `.bin` files are not converted.
 - Replace `WHISPER_MODELS`/`WhisperModel` with `MODEL_CATALOG`/`DownloadableModel`.
 - The default model directory is now `~/.cache/agent-voice`.
+- Await streaming `cancel()` to finish in-flight work and release its session before disposing the transcriber.
 - Dispose reusable transcribers when changing profiles or shutting down the host.
 
 Local inference is explicitly unsupported under Bun because transcribe-cpp 0.2.4 documents a native finalizer crash. API profiles remain available there.
