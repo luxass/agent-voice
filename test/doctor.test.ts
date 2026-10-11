@@ -84,11 +84,11 @@ describe("runDoctor", () => {
 
   it.each(["0.9.2", "1.0.0", "1.3.99"])(
     "rejects local inference under Bun %s without loading the native binding",
-    async (bun) => {
+    async (bunVersion) => {
       await environment();
       vi.stubGlobal("process", {
         ...process,
-        versions: { ...process.versions, bun },
+        versions: { ...process.versions, bun: bunVersion },
       });
       expect(await runDoctor()).toContainEqual({
         id: "inference",
@@ -102,11 +102,11 @@ describe("runDoctor", () => {
 
   it.each(["1.4.0", "1.4.2", "1.10.0", "2.0.0"])(
     "checks local inference under Bun %s",
-    async (bun) => {
+    async (bunVersion) => {
       await environment();
       vi.stubGlobal("process", {
         ...process,
-        versions: { ...process.versions, bun },
+        versions: { ...process.versions, bun: bunVersion },
       });
       expect(await runDoctor()).toContainEqual({ id: "inference", ok: true, detail: "CPU" });
       expect(native.getAvailableBackends).toHaveBeenCalledOnce();
