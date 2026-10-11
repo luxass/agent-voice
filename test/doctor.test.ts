@@ -82,20 +82,36 @@ describe("runDoctor", () => {
     ]);
   });
 
-  it("rejects local inference under Bun without loading the native binding", async () => {
-    await environment();
-    vi.stubGlobal("process", {
-      ...process,
-      versions: { ...process.versions, bun: "1.4.2" },
-    });
-    expect(await runDoctor()).toContainEqual({
-      id: "inference",
-      ok: false,
-      detail: "transcribe-cpp 0.2.4 is not supported in Bun",
-      fix: "use an API profile",
-    });
-    expect(native.getAvailableBackends).not.toHaveBeenCalled();
-  });
+  it.each(["0.9.2", "1.0.0", "1.3.99"])(
+    "rejects local inference under Bun %s without loading the native binding",
+    async (bun) => {
+      await environment();
+      vi.stubGlobal("process", {
+        ...process,
+        versions: { ...process.versions, bun },
+      });
+      expect(await runDoctor()).toContainEqual({
+        id: "inference",
+        ok: false,
+        detail: "transcribe-cpp 0.2.4 is not supported in Bun versions below 1.4",
+        fix: "upgrade to Bun 1.4 or later, or use an API profile",
+      });
+      expect(native.getAvailableBackends).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["1.4.0", "1.4.2", "1.10.0", "2.0.0"])(
+    "checks local inference under Bun %s",
+    async (bun) => {
+      await environment();
+      vi.stubGlobal("process", {
+        ...process,
+        versions: { ...process.versions, bun },
+      });
+      expect(await runDoctor()).toContainEqual({ id: "inference", ok: true, detail: "CPU" });
+      expect(native.getAvailableBackends).toHaveBeenCalledOnce();
+    },
+  );
 
   it("reports a native binding with no registered inference backends", async () => {
     await environment();

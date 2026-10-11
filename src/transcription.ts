@@ -6,6 +6,7 @@ import { encodeWav, type RecordedAudio } from "./audio";
 import type { TranscriptionProfile } from "./config";
 import { discoverLocalModels } from "./models";
 import { expandHome } from "./paths";
+import { isUnsupportedBun } from "./runtime";
 
 type ApiProfile = Extract<TranscriptionProfile, { type: "api" }>;
 
@@ -122,7 +123,7 @@ async function postAudio(
  *
  * @param {TranscriptionProfile} profile - Local model or API configuration.
  * @returns A transcriber bound to the profile.
- * @throws If local transcription is requested under Bun or the GGUF model cannot load.
+ * @throws If local transcription is requested under Bun below 1.4 or the GGUF model cannot load.
  */
 export async function createTranscriber(profile: TranscriptionProfile): Promise<Transcriber> {
   if (profile.type === "api") {
@@ -141,10 +142,10 @@ export async function createTranscriber(profile: TranscriptionProfile): Promise<
     };
   }
 
-  // transcribe-cpp 0.2.4 documents a Bun N-API finalizer crash. Do not load it there.
-  if (process.versions.bun != null)
+  // Avoid the transcribe-cpp 0.2.4 N-API finalizer crash in Bun versions below 1.4.
+  if (isUnsupportedBun())
     throw new Error(
-      "Local transcription with transcribe-cpp 0.2.4 is not supported in Bun; use an API profile",
+      "Local transcription with transcribe-cpp 0.2.4 is not supported in Bun versions below 1.4; upgrade to Bun 1.4 or later, or use an API profile",
     );
   const path = profile.model ?? discoverLocalModels()[0];
   if (path == null) throw new Error("No GGUF model found; download one or configure a local model");

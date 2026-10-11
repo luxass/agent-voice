@@ -212,14 +212,28 @@ describe("local transcription", () => {
     );
   });
 
-  it("rejects Bun before importing or loading local inference", async () => {
-    const { model } = await fixture();
-    vi.stubGlobal("process", { ...process, versions: { ...process.versions, bun: "1.4.2" } });
-    await expect(createTranscriber(local(model))).rejects.toThrow(
-      "Local transcription with transcribe-cpp 0.2.4 is not supported in Bun",
-    );
-    expect(native.load).not.toHaveBeenCalled();
-  });
+  it.each(["0.9.2", "1.0.0", "1.3.99"])(
+    "rejects Bun %s before importing or loading local inference",
+    async (bun) => {
+      const { model } = await fixture();
+      vi.stubGlobal("process", { ...process, versions: { ...process.versions, bun } });
+      await expect(createTranscriber(local(model))).rejects.toThrow(
+        "Local transcription with transcribe-cpp 0.2.4 is not supported in Bun versions below 1.4; upgrade to Bun 1.4 or later, or use an API profile",
+      );
+      expect(native.load).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["1.4.0", "1.4.2", "1.10.0", "2.0.0"])(
+    "transcribes locally under Bun %s",
+    async (bun) => {
+      const { model } = await fixture();
+      vi.stubGlobal("process", { ...process, versions: { ...process.versions, bun } });
+      await expect(transcribe(AUDIO, local(model))).resolves.toBe("hello world");
+      expect(native.load).toHaveBeenCalledWith(model);
+      expect(native.model.dispose).toHaveBeenCalledOnce();
+    },
+  );
 });
 
 describe("streaming transcription", () => {
@@ -487,16 +501,23 @@ describe("api transcription", () => {
     ).rejects.toThrow("Transcription API response is missing text");
   });
 
-  it("keeps API profiles available under Bun without native inference", async () => {
-    const server = await apiServer({ text: "hello" });
-    vi.stubGlobal("process", { ...process, versions: { ...process.versions, bun: "1.4.2" } });
-    const transcriber = await createTranscriber({ type: "api", endpoint: server.url, model: "m" });
-    expect(transcriber.supportsStreaming).toBe(false);
-    await expect(transcriber.startStream()).resolves.toBeUndefined();
-    await expect(transcriber.transcribe(AUDIO)).resolves.toBe("hello");
-    transcriber.dispose();
-    expect(native.load).not.toHaveBeenCalled();
-  });
+  it.each(["1.3.99", "1.4.0"])(
+    "keeps API profiles available under Bun %s without native inference",
+    async (bun) => {
+      const server = await apiServer({ text: "hello" });
+      vi.stubGlobal("process", { ...process, versions: { ...process.versions, bun } });
+      const transcriber = await createTranscriber({
+        type: "api",
+        endpoint: server.url,
+        model: "m",
+      });
+      expect(transcriber.supportsStreaming).toBe(false);
+      await expect(transcriber.startStream()).resolves.toBeUndefined();
+      await expect(transcriber.transcribe(AUDIO)).resolves.toBe("hello");
+      transcriber.dispose();
+      expect(native.load).not.toHaveBeenCalled();
+    },
+  );
 
   it("honors an aborted API request signal", async () => {
     const server = await apiServer({ text: "hello" });
