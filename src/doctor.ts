@@ -4,6 +4,7 @@ import { getActiveProfile, type TranscriptionProfile, type VoiceSettings } from 
 import { listInputDevices, type InputDevice } from "./devices";
 import { discoverLocalModels } from "./models";
 import { expandHome } from "./paths";
+import { isUnsupportedBun } from "./runtime";
 
 export type DoctorCheckId = "device" | "inference" | "model" | "api-key";
 
@@ -20,12 +21,12 @@ export type DoctorOptions = {
 };
 
 async function checkInference(): Promise<DoctorCheck> {
-  if (process.versions.bun != null)
+  if (isUnsupportedBun())
     return {
       id: "inference",
       ok: false,
-      detail: "transcribe-cpp 0.2.4 is not supported in Bun",
-      fix: "use an API profile",
+      detail: "transcribe-cpp 0.2.4 is not supported in Bun versions below 1.4",
+      fix: "upgrade to Bun 1.4 or later, or use an API profile",
     };
   try {
     const { getAvailableBackends } = await import("transcribe-cpp");

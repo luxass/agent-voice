@@ -23,6 +23,6 @@ Breaking changes for the next pre-1.0 minor release:
 - Await streaming `cancel()` to finish in-flight work and release its session before disposing the transcriber.
 - Dispose reusable transcribers when changing profiles or shutting down the host.
 
-Local inference is explicitly unsupported under Bun because transcribe-cpp 0.2.4 documents a native finalizer crash. API profiles remain available there.
+Local inference is unsupported under Bun versions below 1.4 because transcribe-cpp 0.2.4 documents a native finalizer crash. Bun 1.4 and later can load local inference. API profiles remain available on all Bun versions.
 
 Move runtime dependencies to the named `runtime` catalog and remove the unnamed catalog. Pin `@handy-computer/recorder` to 0.1.0 and remove the Picovoice dependency. Development dependencies retain the named `dev` catalog.
