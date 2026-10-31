@@ -11,16 +11,16 @@ minimumReleaseAgeExclude:
 catalogs:
   dev:
     "@types/node": 26.6.5
-    oxfmt: 0.72.0
+    oxfmt: 0.74.0
     oxlint: 1.87.0
-    oxlint-tsgolint: 7.0.2004
+    oxlint-tsgolint: 7.0.2005
     publint: 0.3.25
-    tsdown: 0.23.1
+    tsdown: 0.23.2
     typescript: 7.0.2
     vitest: 5.0.3
-    vitest-testdirs: 4.5.1
+    vitest-testdirs: 4.5.2
 
   runtime:
-    "@handy-computer/recorder": 0.1.0
-    transcribe-cpp: 0.3.1
-    typebox: 1.3.36
+    "@handy-computer/recorder": 0.2.1
+    transcribe-cpp: 0.4.1
+    typebox: 1.4.3
